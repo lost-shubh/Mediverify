@@ -17,7 +17,15 @@ if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
 }
 
-const upload = multer({ dest: uploadDir })
+const upload = process.env.VERCEL
+  ? multer({
+      storage: multer.memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+    })
+  : multer({
+      dest: uploadDir,
+      limits: { fileSize: 8 * 1024 * 1024 },
+    })
 
 app.use(
   cors(
@@ -124,14 +132,14 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'Image file is required.' })
     }
 
-    const filePath = req.file.path
-    const stats = await sharp(filePath).stats()
+    const imageSource = req.file.buffer || req.file.path
+    const stats = await sharp(imageSource).stats()
     const [r, g, b] = stats.channels.slice(0, 3).map((ch) => ch.mean)
 
     const brightness = (r + g + b) / (3 * 255)
     const { saturation } = toHsl(r, g, b)
 
-    const sharpStats = await sharp(filePath).greyscale().stats()
+    const sharpStats = await sharp(imageSource).greyscale().stats()
     const sharpness = sharpStats.channels[0].stdev
 
     const issues = []
@@ -164,7 +172,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
       },
     })
   } catch (error) {
-    res.status(500).json({ error: 'Failed to process image.' })
+    res.status(500).json({ error: 'Failed to process image.', details: error.message })
   }
 })
 

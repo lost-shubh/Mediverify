@@ -69,7 +69,9 @@ function Scanner() {
       const response = await axios.post(`${API_BASE}/api/scan`, formData)
       setScanResult(response.data)
     } catch (err) {
-      setError('Scan failed. Please try a clearer image.')
+      const message =
+        err?.response?.data?.error || 'Scan failed. Please try a clearer image.'
+      setError(message)
     } finally {
       setLoading(false)
     }
