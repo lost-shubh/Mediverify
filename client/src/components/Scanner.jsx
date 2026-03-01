@@ -57,7 +57,16 @@ function Scanner() {
   const onDrop = useCallback(async (acceptedFiles) => {
     const file = acceptedFiles[0]
     if (!file) return
-    setPreview(URL.createObjectURL(file))
+    try {
+      if (file.size > 8 * 1024 * 1024) {
+        setError('Image is too large. Please use an image under 8MB.')
+        return
+      }
+      setPreview(URL.createObjectURL(file))
+    } catch (err) {
+      setError('Unable to preview this image. Please try a different file.')
+      return
+    }
     setScanResult(null)
     setError('')
     setLoading(true)
@@ -66,7 +75,9 @@ function Scanner() {
     formData.append('image', file)
 
     try {
-      const response = await axios.post(`${API_BASE}/api/scan`, formData)
+      const response = await axios.post(`${API_BASE}/api/scan`, formData, {
+        timeout: 20000,
+      })
       setScanResult(response.data)
     } catch (err) {
       const message =

@@ -172,6 +172,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
       },
     })
   } catch (error) {
+    console.error('scan error', error)
     res.status(500).json({ error: 'Failed to process image.', details: error.message })
   }
 })
@@ -233,6 +234,17 @@ app.get('/api/reports', (req, res) => {
       },
     })),
   })
+})
+
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    return res.status(400).json({ error: `Upload error: ${err.message}` })
+  }
+  if (err) {
+    console.error('server error', err)
+    return res.status(500).json({ error: 'Server error.', details: err.message })
+  }
+  return next()
 })
 
 if (!process.env.VERCEL) {
