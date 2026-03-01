@@ -60,6 +60,19 @@ function Scanner() {
     }
   }, [preview])
 
+  const toMessage = (value, fallback) => {
+    if (typeof value === 'string') return value
+    if (value && typeof value === 'object') {
+      if (typeof value.message === 'string') return value.message
+      try {
+        return JSON.stringify(value)
+      } catch {
+        return fallback
+      }
+    }
+    return fallback
+  }
+
   const onDrop = useCallback(async (acceptedFiles) => {
     try {
       const file = acceptedFiles[0]
@@ -85,8 +98,10 @@ function Scanner() {
       })
       setScanResult(response.data)
     } catch (err) {
-      const message =
-        err?.response?.data?.error || 'Scan failed. Please try a clearer image.'
+      const message = toMessage(
+        err?.response?.data?.error,
+        'Scan failed. Please try a clearer image.'
+      )
       setError(message)
     } finally {
       setLoading(false)
@@ -164,8 +179,10 @@ function Scanner() {
       setReportStatus('Report submitted. Thank you for helping keep patients safe.')
       setReportState((prev) => ({ ...prev, description: '' }))
     } catch (err) {
-      const message =
-        err?.response?.data?.error || 'Failed to submit report. Please try again.'
+      const message = toMessage(
+        err?.response?.data?.error,
+        'Failed to submit report. Please try again.'
+      )
       setReportStatus(message)
     }
   }
