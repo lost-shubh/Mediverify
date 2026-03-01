@@ -75,6 +75,26 @@ const reports = [
   },
 ]
 
+const ndcSearch = async (query) => {
+  const term = String(query || '').trim()
+  if (!term) return []
+
+  const search = `brand_name:"${term}" OR generic_name:"${term}" OR product_ndc:"${term}"`
+  const url = `https://api.fda.gov/drug/ndc.json?search=${encodeURIComponent(search)}&limit=5`
+
+  const response = await fetch(url)
+  if (!response.ok) return []
+  const data = await response.json()
+  return (data.results || []).map((item) => ({
+    brandName: item.brand_name,
+    genericName: item.generic_name,
+    manufacturerName: item.labeler_name,
+    productNdc: item.product_ndc,
+    dosageForm: item.dosage_form,
+    route: Array.isArray(item.route) ? item.route.join(', ') : item.route,
+  }))
+}
+
 const toHsl = (r, g, b) => {
   const rn = r / 255
   const gn = g / 255
@@ -141,7 +161,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
 })
 
 app.post('/api/report', (req, res) => {
-  const { lat, lng, medicineName, description, city } = req.body || {}
+  const { lat, lng, medicineName, description, city, manufacturerName, productNdc } = req.body || {}
 
   if (typeof lat !== 'number' || typeof lng !== 'number' || !medicineName) {
     return res.status(400).json({ error: 'lat, lng, and medicineName are required.' })
@@ -153,12 +173,23 @@ app.post('/api/report', (req, res) => {
     lng,
     city: city || 'Unknown',
     medicineName,
+    manufacturerName: manufacturerName || '',
+    productNdc: productNdc || '',
     description: description || '',
     dateReported: new Date().toISOString(),
   }
 
   reports.unshift(report)
   res.json({ status: 'ok', report })
+})
+
+app.get('/api/ndc/search', async (req, res) => {
+  try {
+    const results = await ndcSearch(req.query.query)
+    res.json({ results })
+  } catch (error) {
+    res.json({ results: [] })
+  }
 })
 
 app.get('/api/reports', (req, res) => {
@@ -173,6 +204,8 @@ app.get('/api/reports', (req, res) => {
       properties: {
         id: report.id,
         medicineName: report.medicineName,
+        manufacturerName: report.manufacturerName,
+        productNdc: report.productNdc,
         description: report.description,
         city: report.city,
         dateReported: report.dateReported,

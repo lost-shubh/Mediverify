@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import axios from 'axios'
 
@@ -23,8 +23,36 @@ function Scanner() {
     description: '',
     lat: null,
     lng: null,
+    manufacturerName: '',
+    productNdc: '',
   })
   const [reportStatus, setReportStatus] = useState('')
+  const [ndcResults, setNdcResults] = useState([])
+  const [ndcLoading, setNdcLoading] = useState(false)
+
+  useEffect(() => {
+    if (!showReport) return
+    if (!reportState.medicineName) {
+      setNdcResults([])
+      return
+    }
+
+    const timer = setTimeout(async () => {
+      try {
+        setNdcLoading(true)
+        const response = await axios.get(`${API_BASE}/api/ndc/search`, {
+          params: { query: reportState.medicineName },
+        })
+        setNdcResults(response.data.results || [])
+      } catch (err) {
+        setNdcResults([])
+      } finally {
+        setNdcLoading(false)
+      }
+    }, 400)
+
+    return () => clearTimeout(timer)
+  }, [reportState.medicineName, showReport])
 
   const onDrop = useCallback(async (acceptedFiles) => {
     const file = acceptedFiles[0]
@@ -111,6 +139,8 @@ function Scanner() {
         lat: reportState.lat,
         lng: reportState.lng,
         medicineName: reportState.medicineName || 'Unknown Medicine',
+        manufacturerName: reportState.manufacturerName,
+        productNdc: reportState.productNdc,
         description: reportState.description,
       })
       setReportStatus('Report submitted. Thank you for helping keep patients safe.')
@@ -196,12 +226,46 @@ function Scanner() {
                 <input
                   value={reportState.medicineName}
                   onChange={(event) =>
-                    setReportState((prev) => ({ ...prev, medicineName: event.target.value }))
+                    setReportState((prev) => ({
+                      ...prev,
+                      medicineName: event.target.value,
+                      manufacturerName: '',
+                      productNdc: '',
+                    }))
                   }
                   placeholder="e.g. Paracet-500"
                   className="mt-2 w-full rounded-xl border border-cyan-400/20 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-300 focus:outline-none"
                   required
                 />
+                {ndcLoading && (
+                  <p className="mt-2 text-xs text-cyan-200">Searching FDA NDC...</p>
+                )}
+                {ndcResults.length > 0 && (
+                  <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-cyan-400/20 bg-slate-950/90 text-xs text-slate-200">
+                    {ndcResults.map((item) => (
+                      <button
+                        type="button"
+                        key={`${item.productNdc}-${item.brandName}`}
+                        onClick={() =>
+                          setReportState((prev) => ({
+                            ...prev,
+                            medicineName: item.brandName || prev.medicineName,
+                            manufacturerName: item.manufacturerName || '',
+                            productNdc: item.productNdc || '',
+                          }))
+                        }
+                        className="w-full border-b border-cyan-400/10 px-3 py-2 text-left hover:bg-cyan-400/10"
+                      >
+                        <div className="font-semibold text-slate-100">
+                          {item.brandName || item.genericName}
+                        </div>
+                        <div className="text-[11px] text-slate-400">
+                          {item.manufacturerName} · NDC {item.productNdc}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </label>
               <label className="text-sm text-slate-200">
                 Detected coordinates
@@ -225,6 +289,26 @@ function Scanner() {
                     required
                   />
                 </div>
+              </label>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="text-sm text-slate-200">
+                Manufacturer (FDA NDC)
+                <input
+                  value={reportState.manufacturerName}
+                  readOnly
+                  placeholder="Auto-filled from FDA database"
+                  className="mt-2 w-full rounded-xl border border-cyan-400/20 bg-slate-900/40 px-3 py-2 text-sm text-slate-300"
+                />
+              </label>
+              <label className="text-sm text-slate-200">
+                Product NDC
+                <input
+                  value={reportState.productNdc}
+                  readOnly
+                  placeholder="Auto-filled"
+                  className="mt-2 w-full rounded-xl border border-cyan-400/20 bg-slate-900/40 px-3 py-2 text-sm text-slate-300"
+                />
               </label>
             </div>
             <label className="text-sm text-slate-200">

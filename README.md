@@ -40,6 +40,7 @@ The scan compares brightness and saturation against a stored "genuine" fingerpri
 - Reports are stored in-memory and reset when the server restarts.
 - The live map uses Leaflet + OpenStreetMap tiles (no API key required).
 - Dataset reference (for future model training): MEDetect dataset on Roboflow Universe (CC BY 4.0, 4.8k images, authentic vs counterfeit classes). https://universe.roboflow.com/medetect/medetect-9kphx
+- The report form queries the FDA NDC directory via the openFDA API to suggest medicine names and manufacturer details.
 
 ## Vercel Deployment
 

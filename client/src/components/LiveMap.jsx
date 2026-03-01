@@ -99,6 +99,12 @@ function LiveMap() {
                     <p className="text-xs text-slate-300">
                       {props.city || 'Unknown'} • {new Date(props.dateReported).toLocaleString()}
                     </p>
+                    {(props.manufacturerName || props.productNdc) && (
+                      <p className="text-[11px] text-slate-400">
+                        {props.manufacturerName ? `${props.manufacturerName}` : 'Unknown manufacturer'}
+                        {props.productNdc ? ` · NDC ${props.productNdc}` : ''}
+                      </p>
+                    )}
                     <p className="text-xs text-slate-200">{props.description}</p>
                   </Popup>
                 </Marker>
