@@ -54,27 +54,32 @@ function Scanner() {
     return () => clearTimeout(timer)
   }, [reportState.medicineName, showReport])
 
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview)
+    }
+  }, [preview])
+
   const onDrop = useCallback(async (acceptedFiles) => {
-    const file = acceptedFiles[0]
-    if (!file) return
     try {
+      const file = acceptedFiles[0]
+      if (!file) return
+
       if (file.size > 8 * 1024 * 1024) {
         setError('Image is too large. Please use an image under 8MB.')
         return
       }
+
+      if (preview) URL.revokeObjectURL(preview)
       setPreview(URL.createObjectURL(file))
-    } catch (err) {
-      setError('Unable to preview this image. Please try a different file.')
-      return
-    }
-    setScanResult(null)
-    setError('')
-    setLoading(true)
 
-    const formData = new FormData()
-    formData.append('image', file)
+      setScanResult(null)
+      setError('')
+      setLoading(true)
 
-    try {
+      const formData = new FormData()
+      formData.append('image', file)
+
       const response = await axios.post(`${API_BASE}/api/scan`, formData, {
         timeout: 20000,
       })
@@ -86,7 +91,7 @@ function Scanner() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [preview])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
