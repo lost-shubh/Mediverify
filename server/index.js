@@ -5,11 +5,14 @@ const sharp = require('sharp')
 const { v4: uuidv4 } = require('uuid')
 const path = require('path')
 const fs = require('fs')
+const os = require('os')
 
 const app = express()
 const PORT = process.env.PORT || 3001
 
-const uploadDir = path.join(__dirname, 'uploads')
+const uploadDir = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'medverify-uploads')
+  : path.join(__dirname, 'uploads')
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
 }
@@ -178,6 +181,10 @@ app.get('/api/reports', (req, res) => {
   })
 })
 
-app.listen(PORT, () => {
-  console.log(`MedVerify server running on http://localhost:${PORT}`)
-})
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`MedVerify server running on http://localhost:${PORT}`)
+  })
+}
+
+module.exports = app

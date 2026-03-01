@@ -2,7 +2,9 @@ import { useCallback, useMemo, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
 import axios from 'axios'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001'
+const API_BASE = import.meta.env.DEV
+  ? import.meta.env.VITE_API_BASE || 'http://localhost:3001'
+  : import.meta.env.VITE_API_BASE || ''
 
 const trail = [
   { label: 'Manufacturer', timestamp: '2026-02-27 08:14 IST', hash: '0xa7f4c3...9d12' },

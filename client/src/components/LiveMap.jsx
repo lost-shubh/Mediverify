@@ -3,7 +3,9 @@ import axios from 'axios'
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:3001'
+const API_BASE = import.meta.env.DEV
+  ? import.meta.env.VITE_API_BASE || 'http://localhost:3001'
+  : import.meta.env.VITE_API_BASE || ''
 
 const pulseIcon = L.divIcon({
   className: '',

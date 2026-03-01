@@ -40,3 +40,7 @@ The scan compares brightness and saturation against a stored "genuine" fingerpri
 - Reports are stored in-memory and reset when the server restarts.
 - The live map uses Leaflet + OpenStreetMap tiles (no API key required).
 - Dataset reference (for future model training): MEDetect dataset on Roboflow Universe (CC BY 4.0, 4.8k images, authentic vs counterfeit classes). https://universe.roboflow.com/medetect/medetect-9kphx
+
+## Vercel Deployment
+
+This repo is Vercel-ready: the frontend is built from `client/` and the API runs as a Vercel Serverless Function from `api/index.js`.
