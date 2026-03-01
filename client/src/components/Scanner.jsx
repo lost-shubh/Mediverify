@@ -21,8 +21,8 @@ function Scanner() {
   const [reportState, setReportState] = useState({
     medicineName: '',
     description: '',
-    lat: null,
-    lng: null,
+    lat: '',
+    lng: '',
     manufacturerName: '',
     productNdc: '',
   })
@@ -120,8 +120,8 @@ function Scanner() {
         (pos) => {
           setReportState((prev) => ({
             ...prev,
-            lat: Number(pos.coords.latitude.toFixed(5)),
-            lng: Number(pos.coords.longitude.toFixed(5)),
+            lat: pos.coords.latitude.toFixed(5),
+            lng: pos.coords.longitude.toFixed(5),
           }))
         },
         () => {
@@ -136,8 +136,8 @@ function Scanner() {
     setReportStatus('Submitting report...')
     try {
       await axios.post(`${API_BASE}/api/report`, {
-        lat: reportState.lat,
-        lng: reportState.lng,
+        lat: reportState.lat || undefined,
+        lng: reportState.lng || undefined,
         medicineName: reportState.medicineName || 'Unknown Medicine',
         manufacturerName: reportState.manufacturerName,
         productNdc: reportState.productNdc,
@@ -146,7 +146,9 @@ function Scanner() {
       setReportStatus('Report submitted. Thank you for helping keep patients safe.')
       setReportState((prev) => ({ ...prev, description: '' }))
     } catch (err) {
-      setReportStatus('Failed to submit report. Please try again.')
+      const message =
+        err?.response?.data?.error || 'Failed to submit report. Please try again.'
+      setReportStatus(message)
     }
   }
 
@@ -271,22 +273,20 @@ function Scanner() {
                 Detected coordinates
                 <div className="mt-2 flex gap-2">
                   <input
-                    value={reportState.lat ?? ''}
+                    value={reportState.lat}
                     onChange={(event) =>
-                      setReportState((prev) => ({ ...prev, lat: Number(event.target.value) }))
+                      setReportState((prev) => ({ ...prev, lat: event.target.value }))
                     }
                     placeholder="Latitude"
                     className="w-full rounded-xl border border-cyan-400/20 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-300 focus:outline-none"
-                    required
                   />
                   <input
-                    value={reportState.lng ?? ''}
+                    value={reportState.lng}
                     onChange={(event) =>
-                      setReportState((prev) => ({ ...prev, lng: Number(event.target.value) }))
+                      setReportState((prev) => ({ ...prev, lng: event.target.value }))
                     }
                     placeholder="Longitude"
                     className="w-full rounded-xl border border-cyan-400/20 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-300 focus:outline-none"
-                    required
                   />
                 </div>
               </label>

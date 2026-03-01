@@ -19,7 +19,15 @@ if (!fs.existsSync(uploadDir)) {
 
 const upload = multer({ dest: uploadDir })
 
-app.use(cors({ origin: 'http://localhost:5173' }))
+app.use(
+  cors(
+    process.env.VERCEL
+      ? {}
+      : {
+          origin: 'http://localhost:5173',
+        }
+  )
+)
 app.use(express.json({ limit: '2mb' }))
 
 const referenceFingerprint = {
@@ -163,14 +171,19 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
 app.post('/api/report', (req, res) => {
   const { lat, lng, medicineName, description, city, manufacturerName, productNdc } = req.body || {}
 
-  if (typeof lat !== 'number' || typeof lng !== 'number' || !medicineName) {
-    return res.status(400).json({ error: 'lat, lng, and medicineName are required.' })
+  const parsedLat = Number.parseFloat(lat)
+  const parsedLng = Number.parseFloat(lng)
+  const safeLat = Number.isFinite(parsedLat) ? parsedLat : 20.5937
+  const safeLng = Number.isFinite(parsedLng) ? parsedLng : 78.9629
+
+  if (!medicineName) {
+    return res.status(400).json({ error: 'medicineName is required.' })
   }
 
   const report = {
     id: uuidv4(),
-    lat,
-    lng,
+    lat: safeLat,
+    lng: safeLng,
     city: city || 'Unknown',
     medicineName,
     manufacturerName: manufacturerName || '',
