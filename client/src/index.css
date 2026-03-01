@@ -1,0 +1,92 @@
+@import "tailwindcss";
+
+:root {
+  --navy-900: #0f172a;
+  --navy-800: #111d3c;
+  --cyan-400: #06b6d4;
+  --cyan-300: #22d3ee;
+  --slate-100: #e2e8f0;
+  --slate-200: #cbd5f5;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: radial-gradient(1200px 600px at 15% 10%, #1b2a52 0%, #0f172a 50%);
+  color: var(--slate-100);
+  font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+@keyframes fadeScale {
+  0% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-fade-scale {
+  animation: fadeScale 0.35s ease-out;
+}
+
+@keyframes pulseRing {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.8);
+    opacity: 0;
+  }
+}
+
+.pulse-marker {
+  position: relative;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ef4444;
+  box-shadow: 0 0 12px rgba(239, 68, 68, 0.7);
+}
+
+.pulse-marker::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  border-radius: 999px;
+  border: 2px solid rgba(239, 68, 68, 0.8);
+  animation: pulseRing 1.6s ease-out infinite;
+}
+
+.leaflet-container {
+  width: 100%;
+  height: 100%;
+  border-radius: 18px;
+  background: #0b1224;
+}
+
+.leaflet-popup-content-wrapper,
+.leaflet-popup-tip {
+  background: #0f172a;
+  color: var(--slate-100);
+  border: 1px solid rgba(6, 182, 212, 0.2);
+}
+
+.leaflet-popup-content p {
+  margin: 0.35rem 0;
+}
