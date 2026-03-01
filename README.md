@@ -1,4 +1,5 @@
 # MedVerify
+"Every fake pill is a system failure"
 
 Counterfeit medicine detection demo built for hackathons. Upload a medicine image, compare its visual fingerprint against a reference batch, and see live counterfeit reports on a map.
 
@@ -32,7 +33,7 @@ The server reads the uploaded image with Sharp and computes:
 - Color saturation using HSL conversion from the average RGB.
 - Sharpness proxy using grayscale standard deviation.
 
-The scan compares brightness and saturation against a stored “genuine” fingerprint. If either deviates by more than 15%, the batch is flagged as suspicious.
+The scan compares brightness and saturation against a stored "genuine" fingerprint. If either deviates by more than 15%, the batch is flagged as suspicious.
 
 ## Notes
 
