@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
@@ -18,20 +18,21 @@ const pulseIcon = L.divIcon({
 function LiveMap() {
   const [features, setFeatures] = useState([])
 
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     try {
       const response = await axios.get(`${API_BASE}/api/reports`)
       setFeatures(response.data.features || [])
-    } catch (error) {
+    } catch {
       setFeatures([])
     }
-  }
+  }, [])
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchReports()
     const timer = setInterval(fetchReports, 10000)
     return () => clearInterval(timer)
-  }, [])
+  }, [fetchReports])
 
   const stats = useMemo(() => {
     const total = features.length
@@ -46,7 +47,7 @@ function LiveMap() {
       }
     })
 
-    const mostFlagged = Object.entries(medicineCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—'
+    const mostFlagged = Object.entries(medicineCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '--'
 
     return {
       total,
@@ -86,7 +87,7 @@ function LiveMap() {
         <div className="h-[65vh] min-h-[420px] w-full">
           <MapContainer center={[20.5937, 78.9629]} zoom={5} scrollWheelZoom className="h-full w-full">
             <TileLayer
-              attribution='&copy; OpenStreetMap contributors'
+              attribution="&copy; OpenStreetMap contributors"
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             />
             {features.map((feature) => {
@@ -97,12 +98,12 @@ function LiveMap() {
                   <Popup>
                     <p className="text-sm font-semibold text-cyan-200">{props.medicineName}</p>
                     <p className="text-xs text-slate-300">
-                      {props.city || 'Unknown'} • {new Date(props.dateReported).toLocaleString()}
+                      {props.city || 'Unknown'} - {new Date(props.dateReported).toLocaleString()}
                     </p>
                     {(props.manufacturerName || props.productNdc) && (
                       <p className="text-[11px] text-slate-400">
                         {props.manufacturerName ? `${props.manufacturerName}` : 'Unknown manufacturer'}
-                        {props.productNdc ? ` · NDC ${props.productNdc}` : ''}
+                        {props.productNdc ? ` - NDC ${props.productNdc}` : ''}
                       </p>
                     )}
                     <p className="text-xs text-slate-200">{props.description}</p>

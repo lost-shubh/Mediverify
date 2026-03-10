@@ -44,7 +44,7 @@ function Scanner() {
           params: { query: reportState.medicineName },
         })
         setNdcResults(response.data.results || [])
-      } catch (err) {
+      } catch {
         setNdcResults([])
       } finally {
         setNdcLoading(false)
@@ -73,40 +73,43 @@ function Scanner() {
     return fallback
   }
 
-  const onDrop = useCallback(async (acceptedFiles) => {
-    try {
-      const file = acceptedFiles[0]
-      if (!file) return
+  const onDrop = useCallback(
+    async (acceptedFiles) => {
+      try {
+        const file = acceptedFiles[0]
+        if (!file) return
 
-      if (file.size > 8 * 1024 * 1024) {
-        setError('Image is too large. Please use an image under 8MB.')
-        return
+        if (file.size > 8 * 1024 * 1024) {
+          setError('Image is too large. Please use an image under 8MB.')
+          return
+        }
+
+        if (preview) URL.revokeObjectURL(preview)
+        setPreview(URL.createObjectURL(file))
+
+        setScanResult(null)
+        setError('')
+        setLoading(true)
+
+        const formData = new FormData()
+        formData.append('image', file)
+
+        const response = await axios.post(`${API_BASE}/api/scan`, formData, {
+          timeout: 20000,
+        })
+        setScanResult(response.data)
+      } catch (err) {
+        const message = toMessage(
+          err?.response?.data?.error,
+          'Scan failed. Please try a clearer image.'
+        )
+        setError(message)
+      } finally {
+        setLoading(false)
       }
-
-      if (preview) URL.revokeObjectURL(preview)
-      setPreview(URL.createObjectURL(file))
-
-      setScanResult(null)
-      setError('')
-      setLoading(true)
-
-      const formData = new FormData()
-      formData.append('image', file)
-
-      const response = await axios.post(`${API_BASE}/api/scan`, formData, {
-        timeout: 20000,
-      })
-      setScanResult(response.data)
-    } catch (err) {
-      const message = toMessage(
-        err?.response?.data?.error,
-        'Scan failed. Please try a clearer image.'
-      )
-      setError(message)
-    } finally {
-      setLoading(false)
-    }
-  }, [preview])
+    },
+    [preview]
+  )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -117,6 +120,7 @@ function Scanner() {
   const statusCard = useMemo(() => {
     if (!scanResult) return null
     const verified = scanResult.verified
+    const label = verified ? '[GENUINE]' : '[SUSPICIOUS]'
     return (
       <div
         className={`animate-fade-scale rounded-2xl border p-5 shadow-lg ${
@@ -126,7 +130,7 @@ function Scanner() {
         }`}
       >
         <h3 className="text-lg font-semibold">
-          {verified ? '✅ GENUINE' : '⚠️ SUSPICIOUS'} - Confidence: {scanResult.confidence}%
+          {label} Confidence: {scanResult.confidence}%
         </h3>
         <p className="mt-1 text-sm text-slate-200">
           Batch ID: <span className="font-mono text-cyan-200">{scanResult.batchId}</span>
@@ -229,7 +233,7 @@ function Scanner() {
             {trail.map((step) => (
               <div key={step.label} className="flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-slate-100">{step.label} ✅</p>
+                  <p className="font-semibold text-slate-100">{step.label} [verified]</p>
                   <p className="text-xs text-slate-400">{step.timestamp}</p>
                 </div>
                 <span className="rounded-full border border-cyan-400/30 px-3 py-1 font-mono text-xs text-cyan-200">
@@ -297,7 +301,7 @@ function Scanner() {
                           {item.brandName || item.genericName}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                          {item.manufacturerName} · NDC {item.productNdc}
+                          {item.manufacturerName} - NDC {item.productNdc}
                         </div>
                       </button>
                     ))}
