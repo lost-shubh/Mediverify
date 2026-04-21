@@ -1,0 +1,52 @@
+{
+  "name": "MedVerify Visual Fingerprint Baseline",
+  "version": "1.0.0",
+  "type": "feature-baseline",
+  "trained": false,
+  "trainedAt": null,
+  "dataset": {
+    "authenticSamples": 0,
+    "counterfeitSamples": 0,
+    "source": "No labeled image dataset has been added to this repo yet."
+  },
+  "features": {
+    "brightness": {
+      "description": "Average luminance across RGB channels.",
+      "authenticMean": 0.62,
+      "counterfeitMean": 0.47,
+      "weight": 0.26
+    },
+    "saturation": {
+      "description": "Average color saturation from the mean RGB signature.",
+      "authenticMean": 0.48,
+      "counterfeitMean": 0.3,
+      "weight": 0.24
+    },
+    "sharpness": {
+      "description": "Grayscale standard deviation used as a print clarity proxy.",
+      "authenticMean": 12.5,
+      "counterfeitMean": 6.5,
+      "weight": 0.32
+    },
+    "contrast": {
+      "description": "Average RGB channel spread normalized to the 0-1 range.",
+      "authenticMean": 0.19,
+      "counterfeitMean": 0.11,
+      "weight": 0.18
+    }
+  },
+  "thresholds": {
+    "manualReviewProbability": 0.35,
+    "counterfeitProbability": 0.56
+  },
+  "limitations": [
+    "This is a calibrated visual baseline, not a deep-learning image classifier.",
+    "It does not read text, QR codes, holograms, or packaging layout semantics.",
+    "The deployed report feed is in-memory and can reset when a serverless instance is recycled."
+  ],
+  "nextStepRequirements": [
+    "Add labeled authentic and counterfeit medicine images under training-data/authentic and training-data/counterfeit.",
+    "Run npm run train:model to generate a dataset-derived model artifact.",
+    "Add durable storage if you need reports to survive Vercel cold starts."
+  ]
+}
