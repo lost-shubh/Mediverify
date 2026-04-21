@@ -5,3 +5,4 @@ node_modules
 client/dist
 server/uploads
 .vercel
+training-data/

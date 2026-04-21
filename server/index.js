@@ -1,49 +1,123 @@
 const express = require('express')
 const cors = require('cors')
 const multer = require('multer')
-const sharp = require('sharp')
 const { v4: uuidv4 } = require('uuid')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
+const {
+  extractImageMetrics,
+  loadVisualModel,
+  scoreMetrics,
+} = require('./model/visualModel')
 
 const app = express()
 const PORT = process.env.PORT || 3001
+const MAX_UPLOAD_BYTES = 8 * 1024 * 1024
+const DEFAULT_COORDINATES = { lat: 20.5937, lng: 78.9629 }
+const OPENFDA_TIMEOUT_MS = Number.parseInt(process.env.OPENFDA_TIMEOUT_MS || '8000', 10)
+const runtimeStartedAt = new Date()
+const allowedMimeTypes = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+])
+const visualModel = loadVisualModel()
 
 const uploadDir = process.env.VERCEL
   ? path.join(os.tmpdir(), 'medverify-uploads')
   : path.join(__dirname, 'uploads')
+
 if (!fs.existsSync(uploadDir)) {
   fs.mkdirSync(uploadDir, { recursive: true })
 }
 
-const upload = process.env.VERCEL
-  ? multer({
-      storage: multer.memoryStorage(),
-      limits: { fileSize: 8 * 1024 * 1024 },
-    })
-  : multer({
-      dest: uploadDir,
-      limits: { fileSize: 8 * 1024 * 1024 },
-    })
+const sanitizeText = (value, { fallback = '', maxLength = 200 } = {}) => {
+  if (typeof value !== 'string') return fallback
+
+  const trimmed = value.trim().replace(/\s+/g, ' ')
+  if (!trimmed) return fallback
+
+  return trimmed.slice(0, maxLength)
+}
+
+const sanitizeCoordinate = (value, min, max, fallback) => {
+  const parsed = Number.parseFloat(value)
+
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    return fallback
+  }
+
+  return Number(parsed.toFixed(5))
+}
+
+const deleteUpload = async (file) => {
+  if (!file?.path) return
+
+  try {
+    await fs.promises.unlink(file.path)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') {
+      console.error('upload cleanup error', error)
+    }
+  }
+}
+
+const isInvalidImageError = (error) =>
+  /unsupported image format|input buffer|input file/i.test(error?.message || '')
+
+const upload = multer({
+  storage: process.env.VERCEL
+    ? multer.memoryStorage()
+    : multer.diskStorage({
+        destination: (_req, _file, cb) => cb(null, uploadDir),
+        filename: (_req, file, cb) => {
+          cb(
+            null,
+            `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(file.originalname || '')}`
+          )
+        },
+      }),
+  limits: { fileSize: MAX_UPLOAD_BYTES },
+  fileFilter: (_req, file, cb) => {
+    if (allowedMimeTypes.has(file.mimetype)) {
+      cb(null, true)
+      return
+    }
+
+    const error = new Error('Only JPG, PNG, WEBP, and GIF images are supported.')
+    error.statusCode = 400
+    cb(error)
+  },
+})
+
+const allowedOrigins = new Set([
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+  'http://127.0.0.1:4173',
+])
 
 app.use(
   cors(
     process.env.VERCEL
       ? {}
       : {
-          origin: 'http://localhost:5173',
+          origin(origin, callback) {
+            if (!origin || allowedOrigins.has(origin)) {
+              callback(null, true)
+              return
+            }
+
+            callback(null, false)
+          },
         }
   )
 )
 app.use(express.json({ limit: '2mb' }))
 
-const referenceFingerprint = {
-  brightness: 0.62,
-  saturation: 0.48,
-}
-
-const reports = [
+const seedReports = [
   {
     id: uuidv4(),
     lat: 28.6139,
@@ -90,102 +164,150 @@ const reports = [
     dateReported: '2026-02-26T09:20:00.000Z',
   },
 ]
+const reports = [...seedReports]
+
+const escapeOpenFdaTerm = (value) => value.replace(/["\\]/g, '\\$&')
 
 const ndcSearch = async (query) => {
-  const term = String(query || '').trim()
-  if (!term) return []
+  const term = sanitizeText(query, { fallback: '', maxLength: 80 })
+  if (term.length < 2) return []
 
-  const search = `brand_name:"${term}" OR generic_name:"${term}" OR product_ndc:"${term}"`
-  const url = `https://api.fda.gov/drug/ndc.json?search=${encodeURIComponent(search)}&limit=5`
+  const escapedTerm = escapeOpenFdaTerm(term)
+  const searchClauses = [
+    `brand_name:"${escapedTerm}"`,
+    `generic_name:"${escapedTerm}"`,
+    `product_ndc:"${escapedTerm}"`,
+  ]
 
-  const response = await fetch(url)
-  if (!response.ok) return []
-  const data = await response.json()
-  return (data.results || []).map((item) => ({
-    brandName: item.brand_name,
-    genericName: item.generic_name,
-    manufacturerName: item.labeler_name,
-    productNdc: item.product_ndc,
-    dosageForm: item.dosage_form,
-    route: Array.isArray(item.route) ? item.route.join(', ') : item.route,
-  }))
-}
-
-const toHsl = (r, g, b) => {
-  const rn = r / 255
-  const gn = g / 255
-  const bn = b / 255
-  const max = Math.max(rn, gn, bn)
-  const min = Math.min(rn, gn, bn)
-  const l = (max + min) / 2
-  let s = 0
-  if (max !== min) {
-    const d = max - min
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+  if (!escapedTerm.includes(' ')) {
+    searchClauses.push(`brand_name:${escapedTerm}*`, `generic_name:${escapedTerm}*`)
   }
-  return { saturation: s, lightness: l }
+
+  const search = searchClauses.join(' OR ')
+  const url = `https://api.fda.gov/drug/ndc.json?search=${encodeURIComponent(search)}&limit=5`
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), OPENFDA_TIMEOUT_MS)
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        accept: 'application/json',
+      },
+    })
+
+    if (response.status === 404) {
+      return []
+    }
+
+    if (!response.ok) {
+      throw new Error(`openFDA request failed with status ${response.status}`)
+    }
+
+    const data = await response.json()
+
+    return (data.results || []).map((item) => ({
+      brandName: item.brand_name,
+      genericName: item.generic_name,
+      manufacturerName: item.labeler_name,
+      productNdc: item.product_ndc,
+      dosageForm: item.dosage_form,
+      route: Array.isArray(item.route) ? item.route.join(', ') : item.route,
+    }))
+  } catch (error) {
+    if (error.name === 'AbortError') {
+      const timeoutError = new Error('The FDA NDC lookup timed out.')
+      timeoutError.statusCode = 504
+      throw timeoutError
+    }
+
+    throw error
+  } finally {
+    clearTimeout(timeout)
+  }
 }
+
+const getReportStore = () => ({
+  type: 'memory',
+  persistence: process.env.VERCEL ? 'ephemeral' : 'process-lifetime',
+  note: process.env.VERCEL
+    ? 'Reports can reset when the Vercel serverless instance is recycled.'
+    : 'Reports reset when the local server process restarts.',
+})
+
+app.get('/api/health', (_req, res) => {
+  const uptimeSeconds = Math.floor((Date.now() - runtimeStartedAt.getTime()) / 1000)
+
+  res.set('Cache-Control', 'no-store')
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    environment: process.env.VERCEL ? 'vercel' : 'local',
+    uptimeSeconds,
+    reports: {
+      seeded: seedReports.length,
+      current: reports.length,
+      store: getReportStore(),
+    },
+    model: {
+      name: visualModel.name,
+      version: visualModel.version,
+      type: visualModel.type,
+      trained: Boolean(visualModel.trained),
+    },
+  })
+})
+
+app.get('/api/model-info', (_req, res) => {
+  res.set('Cache-Control', 'no-store')
+  res.json({
+    ...visualModel,
+    reportStore: getReportStore(),
+    runtime: {
+      environment: process.env.VERCEL ? 'vercel' : 'local',
+      apiMode: process.env.VERCEL ? 'serverless' : 'node-server',
+    },
+  })
+})
 
 app.post('/api/scan', upload.single('image'), async (req, res) => {
+  const uploadedFile = req.file
+
   try {
-    if (!req.file) {
+    if (!uploadedFile) {
       return res.status(400).json({ error: 'Image file is required.' })
     }
 
-    const imageSource = req.file.buffer || req.file.path
-    const stats = await sharp(imageSource).stats()
-    const [r, g, b] = stats.channels.slice(0, 3).map((ch) => ch.mean)
-
-    const brightness = (r + g + b) / (3 * 255)
-    const { saturation } = toHsl(r, g, b)
-
-    const sharpStats = await sharp(imageSource).greyscale().stats()
-    const sharpness = sharpStats.channels[0].stdev
-
-    const issues = []
-    const brightnessDeviation = Math.abs(brightness - referenceFingerprint.brightness) / referenceFingerprint.brightness
-    const saturationDeviation = Math.abs(saturation - referenceFingerprint.saturation) / referenceFingerprint.saturation
-
-    if (brightnessDeviation > 0.15) {
-      issues.push('Brightness deviates from genuine batch fingerprint.')
-    }
-    if (saturationDeviation > 0.15) {
-      issues.push('Color saturation mismatch detected.')
-    }
-    if (sharpness < 8) {
-      issues.push('Image appears unusually soft; label print may be low quality.')
-    }
-
-    const verified = issues.length === 0
-    const confidence = Math.max(40, 87 - issues.length * 12)
+    const imageSource = uploadedFile.buffer || uploadedFile.path
+    const metrics = await extractImageMetrics(imageSource)
+    const result = scoreMetrics(metrics, visualModel)
     const batchId = `MFG-2024-${Math.floor(10 + Math.random() * 89)}`
 
     res.json({
-      verified,
-      confidence,
-      issues,
+      ...result,
       batchId,
-      metrics: {
-        brightness: Number(brightness.toFixed(3)),
-        saturation: Number(saturation.toFixed(3)),
-        sharpness: Number(sharpness.toFixed(2)),
-      },
+      metrics,
     })
   } catch (error) {
+    if (isInvalidImageError(error)) {
+      return res.status(400).json({ error: 'Uploaded file is not a valid image.' })
+    }
+
     console.error('scan error', error)
     res.status(500).json({ error: 'Failed to process image.', details: error.message })
+  } finally {
+    await deleteUpload(uploadedFile)
   }
 })
 
 app.post('/api/report', (req, res) => {
   const { lat, lng, medicineName, description, city, manufacturerName, productNdc } = req.body || {}
 
-  const parsedLat = Number.parseFloat(lat)
-  const parsedLng = Number.parseFloat(lng)
-  const safeLat = Number.isFinite(parsedLat) ? parsedLat : 20.5937
-  const safeLng = Number.isFinite(parsedLng) ? parsedLng : 78.9629
+  const safeLat = sanitizeCoordinate(lat, -90, 90, DEFAULT_COORDINATES.lat)
+  const safeLng = sanitizeCoordinate(lng, -180, 180, DEFAULT_COORDINATES.lng)
+  const safeMedicineName = sanitizeText(medicineName, { fallback: '', maxLength: 120 })
 
-  if (!medicineName) {
+  if (!safeMedicineName) {
     return res.status(400).json({ error: 'medicineName is required.' })
   }
 
@@ -193,11 +315,11 @@ app.post('/api/report', (req, res) => {
     id: uuidv4(),
     lat: safeLat,
     lng: safeLng,
-    city: city || 'Unknown',
-    medicineName,
-    manufacturerName: manufacturerName || '',
-    productNdc: productNdc || '',
-    description: description || '',
+    city: sanitizeText(city, { fallback: 'Unknown', maxLength: 80 }),
+    medicineName: safeMedicineName,
+    manufacturerName: sanitizeText(manufacturerName, { fallback: '', maxLength: 120 }),
+    productNdc: sanitizeText(productNdc, { fallback: '', maxLength: 40 }),
+    description: sanitizeText(description, { fallback: '', maxLength: 1000 }),
     dateReported: new Date().toISOString(),
   }
 
@@ -210,11 +332,17 @@ app.get('/api/ndc/search', async (req, res) => {
     const results = await ndcSearch(req.query.query)
     res.json({ results })
   } catch (error) {
-    res.json({ results: [] })
+    const statusCode = error.statusCode || 502
+    res.status(statusCode).json({
+      error: 'FDA NDC lookup is temporarily unavailable.',
+      details: error.message,
+      results: [],
+    })
   }
 })
 
 app.get('/api/reports', (req, res) => {
+  res.set('Cache-Control', 'no-store')
   res.json({
     type: 'FeatureCollection',
     features: reports.map((report) => ({
@@ -238,12 +366,24 @@ app.get('/api/reports', (req, res) => {
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res
+        .status(400)
+        .json({ error: 'Image is too large. Please upload an image under 8MB.' })
+    }
+
     return res.status(400).json({ error: `Upload error: ${err.message}` })
   }
+
+  if (err?.statusCode) {
+    return res.status(err.statusCode).json({ error: err.message })
+  }
+
   if (err) {
     console.error('server error', err)
     return res.status(500).json({ error: 'Server error.', details: err.message })
   }
+
   return next()
 })
 

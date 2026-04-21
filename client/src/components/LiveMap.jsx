@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import axios from 'axios'
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet'
 import L from 'leaflet'
-
-const API_BASE = import.meta.env.DEV
-  ? import.meta.env.VITE_API_BASE || 'http://localhost:3001'
-  : import.meta.env.VITE_API_BASE || ''
+import api, { getApiErrorMessage } from '../lib/api.js'
 
 const pulseIcon = L.divIcon({
   className: '',
@@ -15,22 +11,95 @@ const pulseIcon = L.divIcon({
   popupAnchor: [0, -8],
 })
 
-function LiveMap() {
-  const [features, setFeatures] = useState([])
+const normalizeFeatures = (payload) => {
+  const features = Array.isArray(payload?.features) ? payload.features : []
 
-  const fetchReports = async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/api/reports`)
-      setFeatures(response.data.features || [])
-    } catch (error) {
-      setFeatures([])
+  return features.flatMap((feature) => {
+    const coordinates = feature?.geometry?.coordinates
+    const lng = Number.parseFloat(coordinates?.[0])
+    const lat = Number.parseFloat(coordinates?.[1])
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return []
     }
+
+    const properties = feature?.properties || {}
+
+    return [
+      {
+        ...feature,
+        geometry: {
+          type: 'Point',
+          coordinates: [lng, lat],
+        },
+        properties: {
+          id: properties.id || `${lat}-${lng}-${properties.dateReported || 'report'}`,
+          medicineName: properties.medicineName || 'Unknown medicine',
+          manufacturerName: properties.manufacturerName || '',
+          productNdc: properties.productNdc || '',
+          description: properties.description || 'No description provided.',
+          city: properties.city || 'Unknown',
+          dateReported: properties.dateReported || '',
+        },
+      },
+    ]
+  })
+}
+
+const formatReportedAt = (value) => {
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Time unknown'
   }
 
+  return date.toLocaleString()
+}
+
+function LiveMap() {
+  const [features, setFeatures] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
   useEffect(() => {
-    fetchReports()
-    const timer = setInterval(fetchReports, 10000)
-    return () => clearInterval(timer)
+    let active = true
+
+    const loadReports = async (preserveExisting = false) => {
+      try {
+        const response = await api.get('/api/reports')
+        if (!active) return
+
+        setFeatures(normalizeFeatures(response.data))
+        setError('')
+      } catch (requestError) {
+        if (!active) return
+
+        if (!preserveExisting) {
+          setFeatures([])
+        }
+
+        setError(
+          getApiErrorMessage(
+            requestError,
+            'Unable to load live reports right now.'
+          )
+        )
+      } finally {
+        if (active && !preserveExisting) {
+          setLoading(false)
+        }
+      }
+    }
+
+    void loadReports(false)
+    const timer = setInterval(() => {
+      void loadReports(true)
+    }, 10000)
+
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
   }, [])
 
   const stats = useMemo(() => {
@@ -40,13 +109,18 @@ function LiveMap() {
 
     features.forEach((feature) => {
       const props = feature.properties || {}
-      if (props.city) cities.add(props.city)
+
+      if (props.city) {
+        cities.add(props.city)
+      }
+
       if (props.medicineName) {
         medicineCounts[props.medicineName] = (medicineCounts[props.medicineName] || 0) + 1
       }
     })
 
-    const mostFlagged = Object.entries(medicineCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—'
+    const mostFlagged =
+      Object.entries(medicineCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '--'
 
     return {
       total,
@@ -79,11 +153,14 @@ function LiveMap() {
           <p>Live Threat Map</p>
           <span className="flex items-center gap-2 text-xs text-rose-200">
             <span className="h-2 w-2 rounded-full bg-rose-400" />
-            Confirmed Counterfeit Reports
+            {loading ? 'Loading reports' : 'Confirmed counterfeit reports'}
           </span>
         </div>
+        {error && (
+          <p className="mb-3 px-2 text-xs text-amber-200">{error}</p>
+        )}
 
-        <div className="h-[65vh] min-h-[420px] w-full">
+        <div className="relative h-[65vh] min-h-[420px] w-full">
           <MapContainer center={[20.5937, 78.9629]} zoom={5} scrollWheelZoom className="h-full w-full">
             <TileLayer
               attribution='&copy; OpenStreetMap contributors'
@@ -92,17 +169,18 @@ function LiveMap() {
             {features.map((feature) => {
               const [lng, lat] = feature.geometry.coordinates
               const props = feature.properties || {}
+
               return (
                 <Marker key={props.id} position={[lat, lng]} icon={pulseIcon}>
                   <Popup>
                     <p className="text-sm font-semibold text-cyan-200">{props.medicineName}</p>
                     <p className="text-xs text-slate-300">
-                      {props.city || 'Unknown'} • {new Date(props.dateReported).toLocaleString()}
+                      {props.city} - {formatReportedAt(props.dateReported)}
                     </p>
                     {(props.manufacturerName || props.productNdc) && (
                       <p className="text-[11px] text-slate-400">
-                        {props.manufacturerName ? `${props.manufacturerName}` : 'Unknown manufacturer'}
-                        {props.productNdc ? ` · NDC ${props.productNdc}` : ''}
+                        {props.manufacturerName || 'Unknown manufacturer'}
+                        {props.productNdc ? ` - NDC ${props.productNdc}` : ''}
                       </p>
                     )}
                     <p className="text-xs text-slate-200">{props.description}</p>
@@ -111,6 +189,11 @@ function LiveMap() {
               )
             })}
           </MapContainer>
+          {!loading && features.length === 0 && (
+            <div className="pointer-events-none absolute inset-4 flex items-center justify-center rounded-2xl border border-dashed border-cyan-400/20 bg-slate-950/75 px-6 text-center text-sm text-slate-300">
+              No counterfeit reports have been submitted yet. New reports will appear here automatically.
+            </div>
+          )}
         </div>
       </div>
     </div>

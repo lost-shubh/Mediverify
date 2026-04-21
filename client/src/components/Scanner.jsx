@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useDropzone } from 'react-dropzone'
-import axios from 'axios'
-
-const API_BASE = import.meta.env.DEV
-  ? import.meta.env.VITE_API_BASE || 'http://localhost:3001'
-  : import.meta.env.VITE_API_BASE || ''
+import api, { getApiErrorMessage } from '../lib/api.js'
 
 const trail = [
   { label: 'Manufacturer', timestamp: '2026-02-27 08:14 IST', hash: '0xa7f4c3...9d12' },
@@ -12,101 +8,199 @@ const trail = [
   { label: 'Pharmacy', timestamp: '2026-02-28 09:10 IST', hash: '0x8b91dd...fa33' },
 ]
 
-function Scanner() {
+const metricLabels = {
+  brightness: 'Brightness',
+  saturation: 'Saturation',
+  sharpness: 'Sharpness',
+  contrast: 'Contrast',
+}
+
+const initialReportState = {
+  medicineName: '',
+  description: '',
+  lat: '',
+  lng: '',
+  manufacturerName: '',
+  productNdc: '',
+}
+
+const getGeolocationMessage = (error) => {
+  switch (error?.code) {
+    case 1:
+      return 'Location permission was denied. Enter coordinates manually if you have them.'
+    case 2:
+      return 'Your location could not be determined. Enter coordinates manually if you have them.'
+    case 3:
+      return 'Location lookup timed out. Enter coordinates manually if you have them.'
+    default:
+      return 'Location is unavailable right now. Enter coordinates manually if you have them.'
+  }
+}
+
+const getScanState = (scanResult) => {
+  switch (scanResult?.status) {
+    case 'suspicious':
+      return {
+        title: 'Likely Counterfeit',
+        shell: 'border-rose-400/40 bg-rose-500/10',
+        copy: 'Multiple extracted features are closer to the counterfeit calibration band.',
+      }
+    case 'manual-review':
+      return {
+        title: 'Manual Review Required',
+        shell: 'border-amber-400/40 bg-amber-500/10',
+        copy: 'The upload sits near the model boundary and needs human inspection.',
+      }
+    default:
+      return {
+        title: 'Likely Genuine',
+        shell: 'border-emerald-400/40 bg-emerald-500/10',
+        copy: 'No high-risk visual signals exceeded the review threshold.',
+      }
+  }
+}
+
+function Scanner({ modelInfo }) {
   const [preview, setPreview] = useState(null)
   const [scanResult, setScanResult] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showReport, setShowReport] = useState(false)
-  const [reportState, setReportState] = useState({
-    medicineName: '',
-    description: '',
-    lat: '',
-    lng: '',
-    manufacturerName: '',
-    productNdc: '',
-  })
+  const [reportState, setReportState] = useState(initialReportState)
   const [reportStatus, setReportStatus] = useState('')
+  const [reportSubmitting, setReportSubmitting] = useState(false)
   const [ndcResults, setNdcResults] = useState([])
   const [ndcLoading, setNdcLoading] = useState(false)
+  const [ndcError, setNdcError] = useState('')
 
   useEffect(() => {
     if (!showReport) return
-    if (!reportState.medicineName) {
+
+    const query = reportState.medicineName.trim()
+    if (query.length < 2) {
       setNdcResults([])
+      setNdcError('')
       return
     }
 
+    let active = true
     const timer = setTimeout(async () => {
       try {
         setNdcLoading(true)
-        const response = await axios.get(`${API_BASE}/api/ndc/search`, {
-          params: { query: reportState.medicineName },
+        setNdcError('')
+
+        const response = await api.get('/api/ndc/search', {
+          params: { query },
         })
-        setNdcResults(response.data.results || [])
-      } catch (err) {
+
+        if (!active) return
+
+        setNdcResults(Array.isArray(response.data.results) ? response.data.results : [])
+        setNdcError(typeof response.data.error === 'string' ? response.data.error : '')
+      } catch (requestError) {
+        if (!active) return
+
         setNdcResults([])
+        setNdcError(
+          getApiErrorMessage(
+            requestError,
+            'Unable to search the FDA NDC directory right now.'
+          )
+        )
       } finally {
-        setNdcLoading(false)
+        if (active) {
+          setNdcLoading(false)
+        }
       }
     }, 400)
 
-    return () => clearTimeout(timer)
+    return () => {
+      active = false
+      clearTimeout(timer)
+    }
   }, [reportState.medicineName, showReport])
 
   useEffect(() => {
     return () => {
-      if (preview) URL.revokeObjectURL(preview)
+      if (preview) {
+        URL.revokeObjectURL(preview)
+      }
     }
   }, [preview])
 
-  const toMessage = (value, fallback) => {
-    if (typeof value === 'string') return value
-    if (value && typeof value === 'object') {
-      if (typeof value.message === 'string') return value.message
+  const reportStatusClass = useMemo(() => {
+    if (!reportStatus) return 'text-slate-300'
+    if (reportStatus.startsWith('Report submitted')) return 'text-emerald-200'
+    if (reportStatus.startsWith('Submitting')) return 'text-cyan-200'
+    return 'text-amber-200'
+  }, [reportStatus])
+
+  const modelSummary = useMemo(() => {
+    if (!modelInfo) return null
+
+    const authenticSamples = Number(modelInfo.dataset?.authenticSamples || 0)
+    const counterfeitSamples = Number(modelInfo.dataset?.counterfeitSamples || 0)
+    const totalSamples = authenticSamples + counterfeitSamples
+
+    return {
+      name: modelInfo.name,
+      type: modelInfo.type,
+      trainingState: modelInfo.trained
+        ? `${totalSamples} labeled images`
+        : 'No labeled dataset loaded',
+      trainedAt: modelInfo.trainedAt,
+      limitations: Array.isArray(modelInfo.limitations) ? modelInfo.limitations.slice(0, 2) : [],
+    }
+  }, [modelInfo])
+
+  const onDrop = useCallback(
+    async (acceptedFiles) => {
       try {
-        return JSON.stringify(value)
-      } catch {
-        return fallback
+        const file = acceptedFiles[0]
+        if (!file) return
+
+        if (!file.type.startsWith('image/')) {
+          setError('Please upload a JPG, PNG, WEBP, or GIF image.')
+          return
+        }
+
+        if (file.size > 8 * 1024 * 1024) {
+          setError('Image is too large. Please use an image under 8MB.')
+          return
+        }
+
+        if (preview) {
+          URL.revokeObjectURL(preview)
+        }
+
+        setPreview(URL.createObjectURL(file))
+        setScanResult(null)
+        setError('')
+        setLoading(true)
+
+        const formData = new FormData()
+        formData.append('image', file)
+
+        const response = await api.post('/api/scan', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        })
+
+        setScanResult(response.data)
+      } catch (requestError) {
+        setError(
+          getApiErrorMessage(
+            requestError,
+            'Scan failed. Please try a clearer image.'
+          )
+        )
+      } finally {
+        setLoading(false)
       }
-    }
-    return fallback
-  }
-
-  const onDrop = useCallback(async (acceptedFiles) => {
-    try {
-      const file = acceptedFiles[0]
-      if (!file) return
-
-      if (file.size > 8 * 1024 * 1024) {
-        setError('Image is too large. Please use an image under 8MB.')
-        return
-      }
-
-      if (preview) URL.revokeObjectURL(preview)
-      setPreview(URL.createObjectURL(file))
-
-      setScanResult(null)
-      setError('')
-      setLoading(true)
-
-      const formData = new FormData()
-      formData.append('image', file)
-
-      const response = await axios.post(`${API_BASE}/api/scan`, formData, {
-        timeout: 20000,
-      })
-      setScanResult(response.data)
-    } catch (err) {
-      const message = toMessage(
-        err?.response?.data?.error,
-        'Scan failed. Please try a clearer image.'
-      )
-      setError(message)
-    } finally {
-      setLoading(false)
-    }
-  }, [preview])
+    },
+    [preview]
+  )
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -116,23 +210,38 @@ function Scanner() {
 
   const statusCard = useMemo(() => {
     if (!scanResult) return null
-    const verified = scanResult.verified
+
+    const scanState = getScanState(scanResult)
+
     return (
-      <div
-        className={`animate-fade-scale rounded-2xl border p-5 shadow-lg ${
-          verified
-            ? 'border-emerald-400/40 bg-emerald-500/10'
-            : 'border-rose-400/40 bg-rose-500/10'
-        }`}
-      >
-        <h3 className="text-lg font-semibold">
-          {verified ? '✅ GENUINE' : '⚠️ SUSPICIOUS'} - Confidence: {scanResult.confidence}%
-        </h3>
-        <p className="mt-1 text-sm text-slate-200">
-          Batch ID: <span className="font-mono text-cyan-200">{scanResult.batchId}</span>
-        </p>
-        {!verified && (
-          <ul className="mt-3 list-disc pl-5 text-sm text-rose-200">
+      <div className={`animate-fade-scale rounded-2xl border p-5 shadow-lg ${scanState.shell}`}>
+        <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h3 className="text-lg font-semibold">{scanState.title}</h3>
+            <p className="mt-1 text-sm text-slate-200">{scanState.copy}</p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-4 py-3 text-sm">
+            <p className="text-slate-300">Confidence</p>
+            <p className="text-2xl font-semibold text-slate-50">{scanResult.confidence}%</p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 text-sm">
+            <p className="text-slate-300">Counterfeit probability</p>
+            <p className="mt-1 text-xl font-semibold text-slate-50">
+              {scanResult.counterfeitProbability}%
+            </p>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 text-sm">
+            <p className="text-slate-300">Model</p>
+            <p className="mt-1 text-sm font-semibold text-slate-50">
+              {scanResult.model?.name || 'Unknown detector'}
+            </p>
+            <p className="mt-1 text-xs text-slate-300">Batch ID: {scanResult.batchId}</p>
+          </div>
+        </div>
+        {scanResult.issues?.length > 0 && (
+          <ul className="mt-4 list-disc pl-5 text-sm text-slate-100">
             {scanResult.issues.map((issue) => (
               <li key={issue}>{issue}</li>
             ))}
@@ -144,48 +253,90 @@ function Scanner() {
 
   const handleReportToggle = () => {
     const next = !showReport
+
     setShowReport(next)
     setReportStatus('')
+    setNdcError('')
 
-    if (!next) return
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          setReportState((prev) => ({
-            ...prev,
-            lat: pos.coords.latitude.toFixed(5),
-            lng: pos.coords.longitude.toFixed(5),
-          }))
-        },
-        () => {
-          setReportStatus('Location permission denied. Please enter coordinates manually.')
-        }
-      )
+    if (!next) {
+      setNdcResults([])
+      return
     }
+
+    if (!navigator.geolocation) {
+      setReportStatus(
+        'Location is unavailable in this browser. Enter coordinates manually if you have them.'
+      )
+      return
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setReportState((prev) => ({
+          ...prev,
+          lat: pos.coords.latitude.toFixed(5),
+          lng: pos.coords.longitude.toFixed(5),
+        }))
+      },
+      (geoError) => {
+        setReportStatus(getGeolocationMessage(geoError))
+      },
+      {
+        enableHighAccuracy: false,
+        timeout: 10000,
+        maximumAge: 60000,
+      }
+    )
   }
 
   const submitReport = async (event) => {
     event.preventDefault()
+
+    const medicineName = reportState.medicineName.trim()
+    if (!medicineName) {
+      setReportStatus('Medicine name is required.')
+      return
+    }
+
+    setReportSubmitting(true)
     setReportStatus('Submitting report...')
+
     try {
-      await axios.post(`${API_BASE}/api/report`, {
+      await api.post('/api/report', {
         lat: reportState.lat || undefined,
         lng: reportState.lng || undefined,
-        medicineName: reportState.medicineName || 'Unknown Medicine',
+        medicineName,
         manufacturerName: reportState.manufacturerName,
         productNdc: reportState.productNdc,
         description: reportState.description,
       })
+
       setReportStatus('Report submitted. Thank you for helping keep patients safe.')
-      setReportState((prev) => ({ ...prev, description: '' }))
-    } catch (err) {
-      const message = toMessage(
-        err?.response?.data?.error,
-        'Failed to submit report. Please try again.'
+      setReportState((prev) => ({
+        ...initialReportState,
+        lat: prev.lat,
+        lng: prev.lng,
+      }))
+      setNdcResults([])
+      setNdcError('')
+    } catch (requestError) {
+      setReportStatus(
+        getApiErrorMessage(
+          requestError,
+          'Failed to submit report. Please try again.'
+        )
       )
-      setReportStatus(message)
+    } finally {
+      setReportSubmitting(false)
     }
   }
+
+  const showNdcEmptyState =
+    showReport &&
+    reportState.medicineName.trim().length >= 2 &&
+    !ndcLoading &&
+    !ndcError &&
+    ndcResults.length === 0
 
   return (
     <div className="grid gap-8 lg:grid-cols-[1.05fr_0.95fr]">
@@ -193,8 +344,8 @@ function Scanner() {
         <div>
           <h2 className="text-2xl font-semibold text-slate-100">Scan Medicine</h2>
           <p className="mt-2 text-sm text-slate-300">
-            Upload a photo of the blister pack or bottle. MedVerify checks the
-            image fingerprint against a known genuine batch.
+            Upload a photo of the blister pack or bottle. MedVerify extracts a visual
+            fingerprint and scores it against the current baseline model artifact.
           </p>
         </div>
 
@@ -217,9 +368,53 @@ function Scanner() {
           </div>
         )}
 
-        {loading && <p className="text-sm text-cyan-200">Analyzing image fingerprint...</p>}
+        {loading && <p className="text-sm text-cyan-200">Extracting image features...</p>}
         {error && <p className="text-sm text-rose-200">{error}</p>}
         {statusCard}
+
+        {scanResult?.featureSignals?.length > 0 && (
+          <div className="rounded-2xl border border-cyan-500/20 bg-slate-900/60 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300/70">
+                Feature Contributions
+              </h3>
+              <span className="text-xs text-slate-400">
+                Higher percentages mean the feature is closer to the counterfeit band.
+              </span>
+            </div>
+            <div className="mt-4 space-y-4">
+              {scanResult.featureSignals.map((signal) => (
+                <div key={signal.feature} className="rounded-2xl border border-cyan-400/10 bg-slate-950/70 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-100">{signal.label}</p>
+                      <p className="text-xs text-slate-400">{signal.description}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-slate-100">
+                      {signal.riskPercent}% risk
+                    </span>
+                  </div>
+                  <div className="mt-3 h-2 rounded-full bg-slate-800">
+                    <div
+                      className={`h-2 rounded-full ${
+                        signal.riskPercent >= 56
+                          ? 'bg-rose-400'
+                          : signal.riskPercent >= 35
+                            ? 'bg-amber-400'
+                            : 'bg-emerald-400'
+                      }`}
+                      style={{ width: `${Math.max(signal.riskPercent, 6)}%` }}
+                    />
+                  </div>
+                  <p className="mt-2 text-xs text-slate-400">
+                    Observed {signal.value} | authentic {signal.authenticMean} | counterfeit{' '}
+                    {signal.counterfeitMean}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-cyan-500/20 bg-slate-900/60 p-4">
           <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-cyan-300/70">
@@ -229,7 +424,7 @@ function Scanner() {
             {trail.map((step) => (
               <div key={step.label} className="flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-slate-100">{step.label} ✅</p>
+                  <p className="font-semibold text-slate-100">{step.label} verified</p>
                   <p className="text-xs text-slate-400">{step.timestamp}</p>
                 </div>
                 <span className="rounded-full border border-cyan-400/30 px-3 py-1 font-mono text-xs text-cyan-200">
@@ -274,19 +469,19 @@ function Scanner() {
                   className="mt-2 w-full rounded-xl border border-cyan-400/20 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-300 focus:outline-none"
                   required
                 />
-                {ndcLoading && (
-                  <p className="mt-2 text-xs text-cyan-200">Searching FDA NDC...</p>
-                )}
+                {ndcLoading && <p className="mt-2 text-xs text-cyan-200">Searching FDA NDC...</p>}
+                {ndcError && <p className="mt-2 text-xs text-amber-200">{ndcError}</p>}
                 {ndcResults.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto rounded-xl border border-cyan-400/20 bg-slate-950/90 text-xs text-slate-200">
                     {ndcResults.map((item) => (
                       <button
                         type="button"
-                        key={`${item.productNdc}-${item.brandName}`}
+                        key={`${item.productNdc}-${item.brandName || item.genericName}`}
                         onClick={() =>
                           setReportState((prev) => ({
                             ...prev,
-                            medicineName: item.brandName || prev.medicineName,
+                            medicineName:
+                              item.brandName || item.genericName || prev.medicineName,
                             manufacturerName: item.manufacturerName || '',
                             productNdc: item.productNdc || '',
                           }))
@@ -297,11 +492,17 @@ function Scanner() {
                           {item.brandName || item.genericName}
                         </div>
                         <div className="text-[11px] text-slate-400">
-                          {item.manufacturerName} · NDC {item.productNdc}
+                          {item.manufacturerName || 'Unknown manufacturer'} - NDC{' '}
+                          {item.productNdc || 'n/a'}
                         </div>
                       </button>
                     ))}
                   </div>
+                )}
+                {showNdcEmptyState && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    No FDA NDC matches were found for that query yet.
+                  </p>
                 )}
               </label>
               <label className="text-sm text-slate-200">
@@ -361,11 +562,12 @@ function Scanner() {
             <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
               <button
                 type="submit"
-                className="rounded-full bg-cyan-400 px-5 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300"
+                disabled={reportSubmitting}
+                className="rounded-full bg-cyan-400 px-5 py-2 text-sm font-semibold text-slate-900 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-cyan-500/60"
               >
-                Submit Report
+                {reportSubmitting ? 'Submitting...' : 'Submit Report'}
               </button>
-              {reportStatus && <p className="text-xs text-slate-300">{reportStatus}</p>}
+              {reportStatus && <p className={`text-xs ${reportStatusClass}`}>{reportStatus}</p>}
             </div>
           </form>
         )}
@@ -373,30 +575,67 @@ function Scanner() {
 
       <section className="space-y-5 rounded-3xl border border-cyan-500/20 bg-slate-950/70 p-6 shadow-2xl">
         <div>
-          <h2 className="text-xl font-semibold text-slate-100">Fingerprint Metrics</h2>
+          <h2 className="text-xl font-semibold text-slate-100">Detector Overview</h2>
           <p className="mt-2 text-sm text-slate-300">
-            The scan highlights deviations from the genuine manufacturer imprint.
+            The deployed API exposes the exact model artifact it is using, including
+            feature weights and training status.
           </p>
         </div>
+
+        <div className="rounded-2xl border border-cyan-500/20 bg-slate-900/60 p-4">
+          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">Model Card</p>
+          <p className="mt-2 text-lg font-semibold text-slate-100">
+            {modelSummary?.name || 'Loading model metadata...'}
+          </p>
+          <div className="mt-3 grid gap-3 md:grid-cols-2">
+            <div className="rounded-2xl border border-cyan-500/20 bg-slate-950/70 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">Type</p>
+              <p className="mt-2 text-sm text-slate-100">{modelSummary?.type || '--'}</p>
+            </div>
+            <div className="rounded-2xl border border-cyan-500/20 bg-slate-950/70 p-4">
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">Training State</p>
+              <p className="mt-2 text-sm text-slate-100">{modelSummary?.trainingState || '--'}</p>
+            </div>
+          </div>
+          {modelSummary?.trainedAt && (
+            <p className="mt-3 text-xs text-slate-400">
+              Trained at: {new Date(modelSummary.trainedAt).toLocaleString()}
+            </p>
+          )}
+          {modelSummary?.limitations?.length > 0 && (
+            <ul className="mt-4 list-disc space-y-2 pl-5 text-sm text-slate-300">
+              {modelSummary.limitations.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         <div className="grid gap-4 md:grid-cols-2">
-          {['Brightness', 'Saturation', 'Sharpness'].map((metric) => (
+          {Object.entries(metricLabels).map(([metricKey, metricLabel]) => (
             <div
-              key={metric}
+              key={metricKey}
               className="rounded-2xl border border-cyan-500/20 bg-slate-900/60 p-4 text-sm"
             >
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">{metric}</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">{metricLabel}</p>
               <p className="mt-2 text-2xl font-semibold text-slate-100">
-                {scanResult ? scanResult.metrics?.[metric.toLowerCase()] ?? '--' : '--'}
+                {scanResult ? scanResult.metrics?.[metricKey] ?? '--' : '--'}
               </p>
-              <p className="text-xs text-slate-400">Reference batch fingerprint</p>
+              <p className="text-xs text-slate-400">
+                Authentic mean:{' '}
+                {modelInfo?.features?.[metricKey]?.authenticMean ?? '--'} | Counterfeit
+                mean: {modelInfo?.features?.[metricKey]?.counterfeitMean ?? '--'}
+              </p>
             </div>
           ))}
         </div>
+
         <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-slate-900/70 to-slate-950/90 p-5 text-sm">
-          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">Risk Advisory</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">Hackathon Note</p>
           <p className="mt-2 text-slate-300">
-            If any indicator spikes above the 15% deviation threshold, the batch is
-            flagged for a manual inspection and immediate containment.
+            This deployment now exposes its real detection stack. It is a calibrated
+            feature baseline with a training pipeline ready for labeled datasets, not a
+            hidden end-to-end deep-learning model.
           </p>
         </div>
       </section>
