@@ -1,105 +1,169 @@
 # MedVerify
-"Every fake pill is a system failure"
 
-Counterfeit medicine detection demo built for hackathons. Upload a medicine image, score its visual fingerprint against the current model artifact, and see live counterfeit reports on a map.
+MedVerify is a counterfeit medicine detection demo built for hackathons. It lets a user upload a medicine image, score it against a lightweight visual screening model, submit suspicious reports, and view those reports on a live map.
 
-## Setup
+Live app: `https://medverify-navy.vercel.app`
 
-1. Install dependencies
+## What It Does
+
+- Scans a medicine image and returns a screening result.
+- Shows a confidence score, counterfeit probability, and feature-level signals.
+- Lets users submit suspicious medicine reports with location metadata.
+- Displays reports on a live Leaflet map.
+- Queries the openFDA NDC API for medicine suggestions and manufacturer metadata.
+
+## Current Scan Outcomes
+
+The app currently returns one of these screening states:
+
+- `Likely Genuine`
+- `Manual Review Required`
+- `Likely Counterfeit`
+
+This is a screening demo, not a certified diagnostic or regulatory system.
+
+## Stack
+
+- Frontend: React + Vite + Tailwind CSS
+- Mapping: Leaflet + React Leaflet
+- Backend: Node.js + Express
+- Image processing: `sharp`
+- Hosting: Vercel
+- External data: openFDA NDC API
+
+## Project Structure
+
+```text
+api/                 Vercel serverless entrypoints
+client/              React frontend
+scripts/             Training and utility scripts
+server/              Express API and visual model runtime
+server/model/        Model artifact and feature scoring logic
 ```
-cd client
+
+## How The Detector Works
+
+The current detector is a feature-based visual baseline. It is not a deep-learning classifier.
+
+For each uploaded image, the backend extracts:
+
+- brightness
+- saturation
+- sharpness
+- contrast
+
+Those signals are compared against the reference values in `server/model/model.json`, and the API returns:
+
+- overall status
+- confidence
+- counterfeit probability
+- feature-level explanations
+
+## Local Development
+
+### 1. Install dependencies
+
+```bash
 npm install
-cd ../server
-npm install
+cd client && npm install
+cd ../server && npm install
 ```
 
-2. Run the services
+### 2. Run the backend
+
+```bash
+npm run dev:server
 ```
-cd server
-npm start
-```
+
+### 3. Run the frontend
+
 In a second terminal:
+
+```bash
+npm run dev:client
 ```
-cd client
-npm run dev
+
+Local URLs:
+
+- frontend: `http://localhost:5173`
+- backend: `http://localhost:3001`
+
+## Available Scripts
+
+From the repo root:
+
+```bash
+npm run dev:server
+npm run dev:client
+npm run build:client
+npm run lint:client
+npm run train:model
 ```
 
-Server runs on `http://localhost:3001` and the client runs on `http://localhost:5173`.
+## API Endpoints
 
-## What Is Deployed
+The deployed API exposes:
 
-- A Vite/React frontend hosted on Vercel.
-- A Node/Express API exposed through `api/index.js`.
-- A visual fingerprint detector backed by `server/model/model.json`.
-- openFDA NDC lookup for medicine suggestions and manufacturer metadata.
+- `GET /api/health`
+- `GET /api/model-info`
+- `GET /api/reports`
+- `POST /api/report`
+- `POST /api/scan`
+- `GET /api/ndc/search?query=...`
 
-## Models In Use
+## Training The Model
 
-### 1. MedVerify Visual Fingerprint Baseline
-- Type: feature-based baseline, not a deep-learning CNN.
-- Runtime file: `server/model/model.json`
-- Feature extractor: `server/model/visualModel.js`
-- Current features:
-  - Brightness from RGB channel means
-  - Saturation from HSL conversion
-  - Sharpness from grayscale standard deviation
-  - Contrast from average RGB channel spread
-
-The scan computes those features with `sharp`, compares them against authentic and counterfeit calibration bands, and returns:
-- `genuine`
-- `manual-review`
-- `suspicious`
-
-### 2. openFDA NDC Lookup
-- This is not an ML model.
-- It enriches the report flow with brand, generic, manufacturer, and NDC data.
-
-### 3. Live Threat Map
-- This is a crowdsourced report layer, not a trained model.
-- Reports are currently stored in memory.
-
-## Training The Detector
-
-There was no labeled image dataset in this repo, so there was nothing honest to train against yet. I added the training pipeline and model artifact support.
-
-Expected dataset layout:
+If you want to replace the fallback baseline with a dataset-derived artifact, add labeled images in this layout:
 
 ```text
 training-data/
   authentic/
     image-1.jpg
-    ...
   counterfeit/
     image-1.jpg
-    ...
 ```
 
-Run training:
+Then run:
 
 ```bash
 npm run train:model
 ```
 
-Optional custom paths:
+Optional arguments:
 
 ```bash
 npm run train:model -- --data-dir ./training-data --output ./server/model/model.json
 ```
 
-That script:
-- extracts image features for each labeled sample
-- computes authentic and counterfeit class means
-- derives feature weights from class separation
-- writes a deployable model artifact back to `server/model/model.json`
+The training script:
 
-## Notes
+- extracts the same image features used at runtime
+- computes class means and spread
+- derives feature weights
+- writes a deployable model artifact
 
-- Reports are stored in-memory and reset when the server restarts.
-- On Vercel, that means reports are ephemeral and may reset when a serverless instance is recycled.
-- The live map uses Leaflet + OpenStreetMap tiles (no API key required).
-- Dataset reference (for future model training): MEDetect dataset on Roboflow Universe (CC BY 4.0, 4.8k images, authentic vs counterfeit classes). https://universe.roboflow.com/medetect/medetect-9kphx
-- The report form queries the FDA NDC directory via the openFDA API to suggest medicine names and manufacturer details.
+## Deployment Notes
 
-## Vercel Deployment
+- The frontend is built from `client/`.
+- The API runs on Vercel serverless functions under `api/`.
+- Reports are stored in memory.
+- On Vercel, report data is ephemeral and can reset when the instance is recycled.
 
-This repo is Vercel-ready: the frontend is built from `client/` and the API runs as a Vercel Serverless Function from `api/index.js`.
+## Important Limitations
+
+- This is a hackathon demo, not a medical device.
+- The detector does not read printed text, QR codes, holograms, or packaging semantics.
+- The current report store is not durable.
+- Model quality depends entirely on the quality of any future labeled dataset.
+
+## Future Improvements
+
+- Durable database-backed reports
+- Better image quality checks before scoring
+- Authenticated reporting
+- Real training dataset and evaluation metrics
+- Packaging text and OCR-based validation
+
+## License
+
+MIT
