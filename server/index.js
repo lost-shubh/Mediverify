@@ -1,7 +1,7 @@
 const express = require('express')
 const cors = require('cors')
 const multer = require('multer')
-const { v4: uuidv4 } = require('uuid')
+const { randomUUID } = require('crypto')
 const path = require('path')
 const fs = require('fs')
 const os = require('os')
@@ -119,7 +119,7 @@ app.use(express.json({ limit: '2mb' }))
 
 const seedReports = [
   {
-    id: uuidv4(),
+    id: randomUUID(),
     lat: 28.6139,
     lng: 77.209,
     city: 'New Delhi',
@@ -128,7 +128,7 @@ const seedReports = [
     dateReported: '2026-02-20T10:12:00.000Z',
   },
   {
-    id: uuidv4(),
+    id: randomUUID(),
     lat: 19.076,
     lng: 72.8777,
     city: 'Mumbai',
@@ -137,7 +137,7 @@ const seedReports = [
     dateReported: '2026-02-22T08:45:00.000Z',
   },
   {
-    id: uuidv4(),
+    id: randomUUID(),
     lat: 12.9716,
     lng: 77.5946,
     city: 'Bengaluru',
@@ -146,7 +146,7 @@ const seedReports = [
     dateReported: '2026-02-23T13:30:00.000Z',
   },
   {
-    id: uuidv4(),
+    id: randomUUID(),
     lat: 22.5726,
     lng: 88.3639,
     city: 'Kolkata',
@@ -155,7 +155,7 @@ const seedReports = [
     dateReported: '2026-02-25T17:05:00.000Z',
   },
   {
-    id: uuidv4(),
+    id: randomUUID(),
     lat: 13.0827,
     lng: 80.2707,
     city: 'Chennai',
@@ -312,7 +312,7 @@ app.post('/api/report', (req, res) => {
   }
 
   const report = {
-    id: uuidv4(),
+    id: randomUUID(),
     lat: safeLat,
     lng: safeLng,
     city: sanitizeText(city, { fallback: 'Unknown', maxLength: 80 }),
