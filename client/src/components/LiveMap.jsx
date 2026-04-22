@@ -150,10 +150,10 @@ function LiveMap() {
 
       <div className="relative rounded-3xl border border-cyan-500/20 bg-slate-950/70 p-4 shadow-2xl">
         <div className="mb-3 flex items-center justify-between px-2 text-sm text-slate-300">
-          <p>Live Threat Map</p>
+          <p>Live Report Map</p>
           <span className="flex items-center gap-2 text-xs text-rose-200">
             <span className="h-2 w-2 rounded-full bg-rose-400" />
-            {loading ? 'Loading reports' : 'Confirmed counterfeit reports'}
+            {loading ? 'Loading reports' : 'Flagged medicine reports'}
           </span>
         </div>
         {error && (
@@ -191,7 +191,7 @@ function LiveMap() {
           </MapContainer>
           {!loading && features.length === 0 && (
             <div className="pointer-events-none absolute inset-4 flex items-center justify-center rounded-2xl border border-dashed border-cyan-400/20 bg-slate-950/75 px-6 text-center text-sm text-slate-300">
-              No counterfeit reports have been submitted yet. New reports will appear here automatically.
+              No medicine reports have been submitted yet. New reports will appear here automatically.
             </div>
           )}
         </div>

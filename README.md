@@ -1,14 +1,14 @@
 # MedVerify
 
-MedVerify is a counterfeit medicine detection demo built for hackathons. It lets a user upload a medicine image, score it against a lightweight visual screening model, submit suspicious reports, and view those reports on a live map.
+MedVerify is a medicine image screening demo built for hackathons. It lets a user upload a medicine image, score it against a lightweight visual baseline model, submit field reports, and view those reports on a live map.
 
 Live app: `https://medverify-navy.vercel.app`
 
 ## What It Does
 
 - Scans a medicine image and returns a screening result.
-- Shows a confidence score, counterfeit probability, and feature-level signals.
-- Lets users submit suspicious medicine reports with location metadata.
+- Shows a confidence score, a model-specific screening score, and feature-level signals.
+- Lets users submit medicine reports with location metadata.
 - Displays reports on a live Leaflet map.
 - Queries the openFDA NDC API for medicine suggestions and manufacturer metadata.
 
@@ -16,11 +16,11 @@ Live app: `https://medverify-navy.vercel.app`
 
 The app currently returns one of these screening states:
 
-- `Likely Genuine`
+- `Within Known Baseline` or `Likely Genuine`
 - `Manual Review Required`
-- `Likely Counterfeit`
+- `Outside Known Baseline` or `Likely Counterfeit`
 
-This is a screening demo, not a certified diagnostic or regulatory system.
+The exact wording depends on the trained model artifact. This is a screening demo, not a certified diagnostic or regulatory system.
 
 ## Stack
 
@@ -56,7 +56,7 @@ Those signals are compared against the reference values in `server/model/model.j
 
 - overall status
 - confidence
-- counterfeit probability
+- model-specific score
 - feature-level explanations
 
 ## Local Development
@@ -113,13 +113,23 @@ The deployed API exposes:
 
 ## Training The Model
 
-If you want to replace the fallback baseline with a dataset-derived artifact, add labeled images in this layout:
+If you want to replace the fallback baseline with a dataset-derived artifact, add labeled images in one of these layouts:
 
 ```text
 training-data/
   authentic/
     image-1.jpg
   counterfeit/
+    image-1.jpg
+```
+
+or:
+
+```text
+training-data/
+  reference/
+    image-1.jpg
+  consumer/
     image-1.jpg
 ```
 
@@ -138,9 +148,14 @@ npm run train:model -- --data-dir ./training-data --output ./server/model/model.
 The training script:
 
 - extracts the same image features used at runtime
-- computes class means and spread
+- computes class/profile means and spread
 - derives feature weights
 - writes a deployable model artifact
+
+Layout behavior:
+
+- `authentic/counterfeit` trains a binary screening baseline
+- `reference/consumer` trains a known-good baseline envelope and flags visual outliers
 
 ## Deployment Notes
 
@@ -154,7 +169,7 @@ The training script:
 - This is a hackathon demo, not a medical device.
 - The detector does not read printed text, QR codes, holograms, or packaging semantics.
 - The current report store is not durable.
-- Model quality depends entirely on the quality of any future labeled dataset.
+- Model quality depends entirely on the coverage and labeling quality of the training dataset.
 
 ## Future Improvements
 

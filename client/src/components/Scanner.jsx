@@ -38,26 +38,87 @@ const getGeolocationMessage = (error) => {
 }
 
 const getScanState = (scanResult) => {
-  switch (scanResult?.status) {
-    case 'suspicious':
+  const presentation = scanResult?.presentation || {}
+
+  switch (presentation.tone) {
+    case 'rose':
       return {
-        title: 'Likely Counterfeit',
+        title: presentation.title || 'Outside Known Baseline',
         shell: 'border-rose-400/40 bg-rose-500/10',
-        copy: 'Multiple extracted features are closer to the counterfeit calibration band.',
+        copy: presentation.copy || 'The upload is outside the trained model envelope.',
       }
-    case 'manual-review':
+    case 'amber':
       return {
-        title: 'Manual Review Required',
+        title: presentation.title || 'Manual Review Required',
         shell: 'border-amber-400/40 bg-amber-500/10',
-        copy: 'The upload sits near the model boundary and needs human inspection.',
+        copy: presentation.copy || 'The upload sits near the model boundary and needs human inspection.',
       }
     default:
       return {
-        title: 'Likely Genuine',
+        title: presentation.title || 'Within Known Baseline',
         shell: 'border-emerald-400/40 bg-emerald-500/10',
-        copy: 'No high-risk visual signals exceeded the review threshold.',
+        copy:
+          presentation.copy || 'The upload remains within the current model baseline.',
       }
   }
+}
+
+const getTotalSamples = (modelInfo) => {
+  const directTotal = Number(modelInfo?.dataset?.totalSamples || 0)
+  if (directTotal > 0) {
+    return directTotal
+  }
+
+  const classTotal = Array.isArray(modelInfo?.dataset?.classes)
+    ? modelInfo.dataset.classes.reduce(
+        (total, entry) => total + Number(entry?.samples || 0),
+        0
+      )
+    : 0
+
+  if (classTotal > 0) {
+    return classTotal
+  }
+
+  const authenticSamples = Number(modelInfo?.dataset?.authenticSamples || 0)
+  const counterfeitSamples = Number(modelInfo?.dataset?.counterfeitSamples || 0)
+
+  return authenticSamples + counterfeitSamples
+}
+
+const getFeatureProfileSummary = (modelInfo, metricKey) => {
+  const classes = Array.isArray(modelInfo?.dataset?.classes) ? modelInfo.dataset.classes : []
+  const profiles = modelInfo?.features?.[metricKey]?.profiles || {}
+  const entries =
+    classes.length > 0
+      ? classes
+      : Object.keys(profiles).map((key) => ({
+          key,
+          label: key,
+        }))
+
+  const parts = entries.flatMap((entry) => {
+    const profile = profiles[entry.key]
+    if (!profile || profile.mean === undefined || profile.mean === null) {
+      return []
+    }
+
+    return [`${entry.label}: ${profile.mean}`]
+  })
+
+  return parts.length > 0 ? parts.join(' | ') : 'Profile means unavailable'
+}
+
+const formatSignalProfiles = (signal) => {
+  const parts = Array.isArray(signal?.profileMeans)
+    ? signal.profileMeans.map((profile) => `${profile.label} ${profile.mean}`)
+    : []
+
+  if (parts.length === 0) {
+    return `Observed ${signal.value}`
+  }
+
+  return `Observed ${signal.value} | ${parts.join(' | ')}`
 }
 
 function Scanner({ modelInfo }) {
@@ -138,15 +199,15 @@ function Scanner({ modelInfo }) {
   const modelSummary = useMemo(() => {
     if (!modelInfo) return null
 
-    const authenticSamples = Number(modelInfo.dataset?.authenticSamples || 0)
-    const counterfeitSamples = Number(modelInfo.dataset?.counterfeitSamples || 0)
-    const totalSamples = authenticSamples + counterfeitSamples
+    const totalSamples = getTotalSamples(modelInfo)
+    const sampleLabel =
+      modelInfo.decisionMode === 'profile-envelope' ? 'baseline images' : 'labeled images'
 
     return {
       name: modelInfo.name,
       type: modelInfo.type,
       trainingState: modelInfo.trained
-        ? `${totalSamples} labeled images`
+        ? `${totalSamples} ${sampleLabel}`
         : 'No labeled dataset loaded',
       trainedAt: modelInfo.trainedAt,
       limitations: Array.isArray(modelInfo.limitations) ? modelInfo.limitations.slice(0, 2) : [],
@@ -227,9 +288,11 @@ function Scanner({ modelInfo }) {
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
           <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 text-sm">
-            <p className="text-slate-300">Counterfeit probability</p>
+            <p className="text-slate-300">
+              {scanResult.scoreLabel || scanResult.presentation?.scoreLabel || 'Score'}
+            </p>
             <p className="mt-1 text-xl font-semibold text-slate-50">
-              {scanResult.counterfeitProbability}%
+              {scanResult.scorePercent ?? '--'}%
             </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-slate-950/30 p-4 text-sm">
@@ -237,6 +300,11 @@ function Scanner({ modelInfo }) {
             <p className="mt-1 text-sm font-semibold text-slate-50">
               {scanResult.model?.name || 'Unknown detector'}
             </p>
+            {scanResult.closestProfile?.label && (
+              <p className="mt-1 text-xs text-slate-300">
+                Closest profile: {scanResult.closestProfile.label}
+              </p>
+            )}
             <p className="mt-1 text-xs text-slate-300">Batch ID: {scanResult.batchId}</p>
           </div>
         </div>
@@ -379,7 +447,8 @@ function Scanner({ modelInfo }) {
                 Feature Contributions
               </h3>
               <span className="text-xs text-slate-400">
-                Higher percentages mean the feature is closer to the counterfeit band.
+                {scanResult.presentation?.featureHint ||
+                  'Higher percentages mean the feature is farther away from the current model baseline.'}
               </span>
             </div>
             <div className="mt-4 space-y-4">
@@ -391,7 +460,7 @@ function Scanner({ modelInfo }) {
                       <p className="text-xs text-slate-400">{signal.description}</p>
                     </div>
                     <span className="text-sm font-semibold text-slate-100">
-                      {signal.riskPercent}% risk
+                      {signal.signalPercent}% {signal.signalLabel || 'signal'}
                     </span>
                   </div>
                   <div className="mt-3 h-2 rounded-full bg-slate-800">
@@ -407,8 +476,7 @@ function Scanner({ modelInfo }) {
                     />
                   </div>
                   <p className="mt-2 text-xs text-slate-400">
-                    Observed {signal.value} | authentic {signal.authenticMean} | counterfeit{' '}
-                    {signal.counterfeitMean}
+                    {formatSignalProfiles(signal)}
                   </p>
                 </div>
               ))}
@@ -555,7 +623,7 @@ function Scanner({ modelInfo }) {
                   setReportState((prev) => ({ ...prev, description: event.target.value }))
                 }
                 rows="3"
-                placeholder="Describe what looked suspicious..."
+                placeholder="Describe what looked unusual..."
                 className="mt-2 w-full rounded-xl border border-cyan-400/20 bg-slate-900/70 px-3 py-2 text-sm text-slate-100 focus:border-cyan-300 focus:outline-none"
               />
             </label>
@@ -575,10 +643,10 @@ function Scanner({ modelInfo }) {
 
       <section className="space-y-5 rounded-3xl border border-cyan-500/20 bg-slate-950/70 p-6 shadow-2xl">
         <div>
-          <h2 className="text-xl font-semibold text-slate-100">Detector Overview</h2>
+          <h2 className="text-xl font-semibold text-slate-100">Model Overview</h2>
           <p className="mt-2 text-sm text-slate-300">
             The deployed API exposes the exact model artifact it is using, including
-            feature weights and training status.
+            dataset labels, feature weights, and training status.
           </p>
         </div>
 
@@ -622,9 +690,7 @@ function Scanner({ modelInfo }) {
                 {scanResult ? scanResult.metrics?.[metricKey] ?? '--' : '--'}
               </p>
               <p className="text-xs text-slate-400">
-                Authentic mean:{' '}
-                {modelInfo?.features?.[metricKey]?.authenticMean ?? '--'} | Counterfeit
-                mean: {modelInfo?.features?.[metricKey]?.counterfeitMean ?? '--'}
+                {getFeatureProfileSummary(modelInfo, metricKey)}
               </p>
             </div>
           ))}
@@ -633,9 +699,9 @@ function Scanner({ modelInfo }) {
         <div className="rounded-2xl border border-cyan-500/20 bg-gradient-to-br from-slate-900/70 to-slate-950/90 p-5 text-sm">
           <p className="text-xs uppercase tracking-[0.2em] text-cyan-300/70">Hackathon Note</p>
           <p className="mt-2 text-slate-300">
-            This deployment now exposes its real detection stack. It is a calibrated
-            feature baseline with a training pipeline ready for labeled datasets, not a
-            hidden end-to-end deep-learning model.
+            This deployment exposes its real visual scoring stack. The model artifact
+            itself declares whether it is running baseline matching or binary screening;
+            there is no hidden end-to-end deep-learning classifier behind this UI.
           </p>
         </div>
       </section>

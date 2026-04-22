@@ -1,52 +1,90 @@
 {
-  "name": "MedVerify Visual Fingerprint Baseline",
-  "version": "1.0.0",
-  "type": "feature-baseline",
-  "trained": false,
-  "trainedAt": null,
+  "name": "MedVerify Authentic Reference Archive Baseline",
+  "version": "1.1.0",
+  "type": "profile-baseline",
+  "decisionMode": "profile-envelope",
+  "trained": true,
+  "trainedAt": "2026-04-22T12:17:08.374Z",
   "dataset": {
-    "authenticSamples": 0,
-    "counterfeitSamples": 0,
-    "source": "No labeled image dataset has been added to this repo yet."
+    "layout": "reference-only",
+    "totalSamples": 4392,
+    "source": "rximage-prepared/rxnav-1024",
+    "classes": [
+      {
+        "key": "reference",
+        "label": "Authentic reference archive",
+        "samples": 4392
+      }
+    ],
+    "trainingEnvelope": {
+      "observedP95Distance": 1.763,
+      "observedMaxDistance": 4.411
+    }
   },
   "features": {
     "brightness": {
       "description": "Average luminance across RGB channels.",
-      "authenticMean": 0.62,
-      "counterfeitMean": 0.47,
-      "weight": 0.26
+      "profiles": {
+        "reference": {
+          "mean": 0.5383,
+          "stdDev": 0.0623
+        }
+      },
+      "weight": 0.3921
     },
     "saturation": {
       "description": "Average color saturation from the mean RGB signature.",
-      "authenticMean": 0.48,
-      "counterfeitMean": 0.3,
-      "weight": 0.24
+      "profiles": {
+        "reference": {
+          "mean": 0.0867,
+          "stdDev": 0.0823
+        }
+      },
+      "weight": 0.0478
     },
     "sharpness": {
       "description": "Grayscale standard deviation used as a print clarity proxy.",
-      "authenticMean": 12.5,
-      "counterfeitMean": 6.5,
-      "weight": 0.32
+      "profiles": {
+        "reference": {
+          "mean": 37.5799,
+          "stdDev": 6.1663
+        }
+      },
+      "weight": 0.2766
     },
     "contrast": {
       "description": "Average RGB channel spread normalized to the 0-1 range.",
-      "authenticMean": 0.19,
-      "counterfeitMean": 0.11,
-      "weight": 0.18
+      "profiles": {
+        "reference": {
+          "mean": 0.1655,
+          "stdDev": 0.0265
+        }
+      },
+      "weight": 0.2834
     }
   },
   "thresholds": {
-    "manualReviewProbability": 0.35,
-    "counterfeitProbability": 0.56
+    "manualReviewDistance": 1.913,
+    "flaggedDistance": 4.911
+  },
+  "presentation": {
+    "scoreLabel": "Baseline variance",
+    "featureSignalLabel": "variance",
+    "featureHint": "Higher percentages mean the feature is farther away from the authentic reference archive baseline.",
+    "clearTitle": "Matches Reference Baseline",
+    "clearCopy": "The upload stays within the authentic reference archive envelope learned from the dataset.",
+    "reviewTitle": "Manual Review Required",
+    "reviewCopy": "The upload is near the edge of the authentic reference archive baseline and should be inspected manually.",
+    "flaggedTitle": "Outside Reference Baseline",
+    "flaggedCopy": "The upload falls outside the authentic reference archive envelope learned from the dataset."
   },
   "limitations": [
-    "This is a calibrated visual baseline, not a deep-learning image classifier.",
-    "It does not read text, QR codes, holograms, or packaging layout semantics.",
-    "The deployed report feed is in-memory and can reset when a serverless instance is recycled."
+    "This artifact is trained only on authentic reference images, so it is an outlier detector rather than a binary counterfeit classifier.",
+    "It does not identify the product; it only checks whether the upload stays inside the learned authentic-reference envelope.",
+    "This is a calibrated visual baseline, not a deep-learning image classifier."
   ],
   "nextStepRequirements": [
-    "Add labeled authentic and counterfeit medicine images under training-data/authentic and training-data/counterfeit.",
-    "Run npm run train:model to generate a dataset-derived model artifact.",
-    "Add durable storage if you need reports to survive Vercel cold starts."
+    "Add consumer/mobile captures for the same products if you want a tighter known-good baseline.",
+    "Add true counterfeit images if you want binary counterfeit screening instead of one-class outlier detection."
   ]
 }
