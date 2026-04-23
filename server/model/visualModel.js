@@ -607,6 +607,66 @@ const computeSkinToneCoverage = (buffer, width, height, channels = 3) => {
   }
 }
 
+const computeHistogramMetrics = (buffer, channels = 3) => {
+  const safeChannels = Math.max(Number(channels || 0), 1)
+  const totalPixels = Math.floor(buffer.length / safeChannels)
+
+  if (totalPixels <= 0) {
+    return {
+      colorEntropy: 0,
+      occupiedColorBins: 0,
+      dominantColorShare: 0,
+      grayscaleEntropy: 0,
+    }
+  }
+
+  const colorBinsPerChannel = 4
+  const colorBinCount = colorBinsPerChannel ** 3
+  const grayscaleBinCount = 16
+  const colorHistogram = new Array(colorBinCount).fill(0)
+  const grayscaleHistogram = new Array(grayscaleBinCount).fill(0)
+
+  for (let index = 0; index < totalPixels; index += 1) {
+    const offset = index * safeChannels
+    const r = buffer[offset]
+    const g = safeChannels > 1 ? buffer[offset + 1] : r
+    const b = safeChannels > 2 ? buffer[offset + 2] : r
+    const rBin = Math.min(colorBinsPerChannel - 1, Math.floor(r / 64))
+    const gBin = Math.min(colorBinsPerChannel - 1, Math.floor(g / 64))
+    const bBin = Math.min(colorBinsPerChannel - 1, Math.floor(b / 64))
+    const colorIndex = rBin * colorBinsPerChannel * colorBinsPerChannel + gBin * colorBinsPerChannel + bBin
+    const grayscale = Math.round((r + g + b) / 3)
+    const grayscaleIndex = Math.min(grayscaleBinCount - 1, Math.floor(grayscale / 16))
+
+    colorHistogram[colorIndex] += 1
+    grayscaleHistogram[grayscaleIndex] += 1
+  }
+
+  const toEntropy = (histogram) => {
+    const nonZero = histogram.filter((count) => count > 0)
+    if (nonZero.length === 0) {
+      return 0
+    }
+
+    const entropy = nonZero.reduce((total, count) => {
+      const probability = count / totalPixels
+      return total - probability * Math.log2(probability)
+    }, 0)
+
+    return entropy / Math.log2(histogram.length)
+  }
+
+  const occupiedColorBins = colorHistogram.filter((count) => count > 0).length / colorBinCount
+  const dominantColorShare = Math.max(...colorHistogram) / totalPixels
+
+  return {
+    colorEntropy: toEntropy(colorHistogram),
+    occupiedColorBins,
+    dominantColorShare,
+    grayscaleEntropy: toEntropy(grayscaleHistogram),
+  }
+}
+
 const extractImageMetrics = async (imageSource) => {
   const colorImage = sharp(imageSource).rotate().removeAlpha().toColourspace('srgb')
   const { data: rgbBuffer, info: rgbInfo } = await colorImage
@@ -644,6 +704,12 @@ const extractImageMetrics = async (imageSource) => {
     rgbInfo.height,
     rgbInfo.channels
   )
+  const {
+    colorEntropy,
+    occupiedColorBins,
+    dominantColorShare,
+    grayscaleEntropy,
+  } = computeHistogramMetrics(rgbBuffer, rgbInfo.channels)
 
   return {
     brightness: round(brightness),
@@ -653,6 +719,10 @@ const extractImageMetrics = async (imageSource) => {
     edgeDensity: round(edgeDensity),
     skinToneCoverage: round(skinToneCoverage),
     centerSkinToneCoverage: round(centerSkinToneCoverage),
+    colorEntropy: round(colorEntropy),
+    occupiedColorBins: round(occupiedColorBins),
+    dominantColorShare: round(dominantColorShare),
+    grayscaleEntropy: round(grayscaleEntropy),
   }
 }
 
@@ -664,6 +734,10 @@ const validateImageMetrics = (metrics) => {
   const edgeDensity = Number(metrics?.edgeDensity)
   const skinToneCoverage = Number(metrics?.skinToneCoverage)
   const centerSkinToneCoverage = Number(metrics?.centerSkinToneCoverage)
+  const colorEntropy = Number(metrics?.colorEntropy)
+  const occupiedColorBins = Number(metrics?.occupiedColorBins)
+  const dominantColorShare = Number(metrics?.dominantColorShare)
+  const grayscaleEntropy = Number(metrics?.grayscaleEntropy)
 
   if (
     ![
@@ -674,6 +748,10 @@ const validateImageMetrics = (metrics) => {
       edgeDensity,
       skinToneCoverage,
       centerSkinToneCoverage,
+      colorEntropy,
+      occupiedColorBins,
+      dominantColorShare,
+      grayscaleEntropy,
     ].every(Number.isFinite)
   ) {
     const error = new Error('Could not extract a reliable visual fingerprint from this image.')
@@ -691,6 +769,13 @@ const validateImageMetrics = (metrics) => {
     centerSkinToneCoverage > 0.24 &&
     edgeDensity < 0.11 &&
     contrast < 0.16
+  const isLikelyDiagramLikeCapture =
+    brightness > 0.72 &&
+    colorEntropy < 0.1 &&
+    occupiedColorBins < 0.08 &&
+    dominantColorShare > 0.94 &&
+    grayscaleEntropy < 0.12 &&
+    saturation < 0.16
 
   if (isBlankWhiteCapture || isBlankDarkCapture || isNearSolidFrame || isLowInformationCapture) {
     const error = new Error(
@@ -703,6 +788,14 @@ const validateImageMetrics = (metrics) => {
   if (isLikelyPortraitLikeCapture) {
     const error = new Error(
       'This looks like a face or portrait photo, not a medicine package. Upload a clear photo of the blister pack, label, or bottle only.'
+    )
+    error.statusCode = 400
+    throw error
+  }
+
+  if (isLikelyDiagramLikeCapture) {
+    const error = new Error(
+      'This looks like a diagram, document, or graphic instead of a medicine photo. Upload a real camera photo of the medicine package only.'
     )
     error.statusCode = 400
     throw error

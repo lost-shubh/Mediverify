@@ -273,6 +273,14 @@ function Scanner({ modelInfo }) {
     if (!scanResult) return null
 
     const scanState = getScanState(scanResult)
+    const confidenceLabel =
+      scanResult.status === 'clear' ? 'Match confidence' : 'Result'
+    const confidenceValue =
+      scanResult.status === 'clear'
+        ? `${scanResult.confidence}%`
+        : scanResult.status === 'manual-review'
+          ? 'Review'
+          : 'Rejected'
 
     return (
       <div className={`animate-fade-scale rounded-2xl border p-5 shadow-lg ${scanState.shell}`}>
@@ -282,8 +290,8 @@ function Scanner({ modelInfo }) {
             <p className="mt-1 text-sm text-slate-200">{scanState.copy}</p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-slate-950/30 px-4 py-3 text-sm">
-            <p className="text-slate-300">Confidence</p>
-            <p className="text-2xl font-semibold text-slate-50">{scanResult.confidence}%</p>
+            <p className="text-slate-300">{confidenceLabel}</p>
+            <p className="text-2xl font-semibold text-slate-50">{confidenceValue}</p>
           </div>
         </div>
         <div className="mt-4 grid gap-3 md:grid-cols-2">
