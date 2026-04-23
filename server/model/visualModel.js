@@ -553,6 +553,33 @@ const extractImageMetrics = async (imageSource) => {
   }
 }
 
+const validateImageMetrics = (metrics) => {
+  const brightness = Number(metrics?.brightness)
+  const saturation = Number(metrics?.saturation)
+  const sharpness = Number(metrics?.sharpness)
+  const contrast = Number(metrics?.contrast)
+
+  if (![brightness, saturation, sharpness, contrast].every(Number.isFinite)) {
+    const error = new Error('Could not extract a reliable visual fingerprint from this image.')
+    error.statusCode = 400
+    throw error
+  }
+
+  const isNearSolidFrame = contrast < 0.015 && sharpness < 2
+  const isBlankWhiteCapture = brightness > 0.94 && saturation < 0.04 && contrast < 0.02
+  const isBlankDarkCapture = brightness < 0.06 && contrast < 0.02 && sharpness < 2
+  const isLowInformationCapture =
+    saturation < 0.02 && contrast < 0.012 && sharpness < 1.5
+
+  if (isBlankWhiteCapture || isBlankDarkCapture || isNearSolidFrame || isLowInformationCapture) {
+    const error = new Error(
+      'The image does not contain enough medicine-packaging detail. Upload a clear photo of the blister pack, label, or bottle.'
+    )
+    error.statusCode = 400
+    throw error
+  }
+}
+
 const getProfileEntries = (config, classes, feature) =>
   classes
     .map((entry) => {
@@ -886,4 +913,5 @@ module.exports = {
   loadVisualModel,
   normalizeModel,
   scoreMetrics,
+  validateImageMetrics,
 }

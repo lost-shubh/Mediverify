@@ -9,6 +9,7 @@ const {
   extractImageMetrics,
   loadVisualModel,
   scoreMetrics,
+  validateImageMetrics,
 } = require('./model/visualModel')
 
 const app = express()
@@ -285,6 +286,7 @@ const scanHandler = async (req, res) => {
 
     const imageSource = uploadedFile.buffer || uploadedFile.path
     const metrics = await extractImageMetrics(imageSource)
+    validateImageMetrics(metrics)
     const result = scoreMetrics(metrics, visualModel)
     const batchId = `MFG-2024-${Math.floor(10 + Math.random() * 89)}`
 
@@ -296,6 +298,10 @@ const scanHandler = async (req, res) => {
   } catch (error) {
     if (isInvalidImageError(error)) {
       return res.status(400).json({ error: 'Uploaded file is not a valid image.' })
+    }
+
+    if (error?.statusCode) {
+      return res.status(error.statusCode).json({ error: error.message })
     }
 
     console.error('scan error', error)
