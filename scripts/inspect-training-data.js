@@ -7,6 +7,7 @@ const DEFAULT_DATA_DIR = path.join(__dirname, '..', 'training-data')
 const SUPPORTED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif'])
 const KNOWN_CLASS_LAYOUTS = [
   { name: 'trainer-native', authentic: 'authentic', counterfeit: 'counterfeit' },
+  { name: 'reference-only', authentic: 'reference', counterfeit: null },
   { name: 'reference-consumer', authentic: 'reference', counterfeit: 'consumer' },
 ]
 
@@ -61,6 +62,19 @@ const collectImageFiles = (dirPath) =>
 const relative = (root, target) => path.relative(root, target).replaceAll('\\', '/')
 
 const summarizeSplit = (root, dirName) => {
+  if (!dirName) {
+    return {
+      name: null,
+      exists: false,
+      totalFiles: 0,
+      supportedImages: 0,
+      unsupportedFiles: 0,
+      unsupportedExamples: [],
+      imageExamples: [],
+      imagePaths: [],
+    }
+  }
+
   const dirPath = path.join(root, dirName)
   const allFiles = collectFiles(dirPath)
   const supportedImages = collectImageFiles(dirPath)
@@ -96,9 +110,9 @@ const readRootNotes = (root) => {
 const detectLayout = (root) => {
   for (const layout of KNOWN_CLASS_LAYOUTS) {
     const authenticDir = path.join(root, layout.authentic)
-    const counterfeitDir = path.join(root, layout.counterfeit)
+    const counterfeitDir = layout.counterfeit ? path.join(root, layout.counterfeit) : null
 
-    if (fs.existsSync(authenticDir) && fs.existsSync(counterfeitDir)) {
+    if (fs.existsSync(authenticDir) && (!counterfeitDir || fs.existsSync(counterfeitDir))) {
       return layout
     }
   }
@@ -137,21 +151,18 @@ const buildAssessment = ({
   counterfeitReadability,
   notes,
 }) => {
+  const isReferenceOnly = layout?.name === 'reference-only'
   const trainerInputCompatible =
     Boolean(layout) &&
     authenticSummary.supportedImages > 0 &&
-    counterfeitSummary.supportedImages > 0 &&
     authenticReadability.readable > 0 &&
-    counterfeitReadability.readable > 0
+    (isReferenceOnly ||
+      (counterfeitSummary.supportedImages > 0 && counterfeitReadability.readable > 0))
 
   const profileBaselineCompatible =
-    layout?.name === 'reference-consumer' &&
-    authenticSummary.supportedImages > 0 &&
-    counterfeitSummary.supportedImages > 0 &&
-    authenticReadability.readable > 0 &&
-    counterfeitReadability.readable > 0
+    (layout?.name === 'reference-consumer' || isReferenceOnly) && trainerInputCompatible
 
-  const smokeTestConvertible = profileBaselineCompatible
+  const smokeTestConvertible = layout?.name === 'reference-consumer' && profileBaselineCompatible
 
   const notesLower = notes.toLowerCase()
   const looksLikeCaptureQualitySplit =
@@ -168,17 +179,26 @@ const buildAssessment = ({
 
   if (!layout) {
     recommendations.push(
-      'Add class folders named authentic/counterfeit for binary screening or reference/consumer for baseline-profile training.'
+      'Add class folders named authentic/counterfeit for binary screening, reference/consumer for baseline-profile training, or reference for a one-class authentic baseline.'
     )
   }
 
   if (profileBaselineCompatible) {
-    recommendations.push(
-      'The current trainer can use this dataset to build a known-good baseline artifact from reference and consumer captures.'
-    )
-    recommendations.push(
-      'Do not use this dataset to claim counterfeit detection performance, because it appears to separate capture quality or source rather than authenticity.'
-    )
+    if (isReferenceOnly) {
+      recommendations.push(
+        'The current trainer can use this dataset to build a known-good authentic reference archive baseline.'
+      )
+      recommendations.push(
+        'This will produce a one-class outlier detector, not a binary counterfeit classifier.'
+      )
+    } else {
+      recommendations.push(
+        'The current trainer can use this dataset to build a known-good baseline artifact from reference and consumer captures.'
+      )
+      recommendations.push(
+        'Do not use this dataset to claim counterfeit detection performance, because it appears to separate capture quality or source rather than authenticity.'
+      )
+    }
   }
 
   if (looksLikeSingleProductDataset) {
