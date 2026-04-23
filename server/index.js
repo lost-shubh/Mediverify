@@ -25,6 +25,12 @@ const allowedMimeTypes = new Set([
 ])
 const visualModel = loadVisualModel()
 
+const register = (method, paths, ...handlers) => {
+  paths.forEach((routePath) => {
+    app[method](routePath, ...handlers)
+  })
+}
+
 const uploadDir = process.env.VERCEL
   ? path.join(os.tmpdir(), 'medverify-uploads')
   : path.join(__dirname, 'uploads')
@@ -270,9 +276,8 @@ app.get('/api/model-info', (_req, res) => {
   })
 })
 
-app.post('/api/scan', upload.single('image'), async (req, res) => {
+const scanHandler = async (req, res) => {
   const uploadedFile = req.file
-
   try {
     if (!uploadedFile) {
       return res.status(400).json({ error: 'Image file is required.' })
@@ -298,9 +303,11 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
   } finally {
     await deleteUpload(uploadedFile)
   }
-})
+}
 
-app.post('/api/report', (req, res) => {
+register('post', ['/scan', '/api/scan'], upload.single('image'), scanHandler)
+
+const reportHandler = (req, res) => {
   const { lat, lng, medicineName, description, city, manufacturerName, productNdc } = req.body || {}
 
   const safeLat = sanitizeCoordinate(lat, -90, 90, DEFAULT_COORDINATES.lat)
@@ -325,9 +332,11 @@ app.post('/api/report', (req, res) => {
 
   reports.unshift(report)
   res.json({ status: 'ok', report })
-})
+}
 
-app.get('/api/ndc/search', async (req, res) => {
+register('post', ['/report', '/api/report'], reportHandler)
+
+const ndcSearchHandler = async (req, res) => {
   try {
     const results = await ndcSearch(req.query.query)
     res.json({ results })
@@ -339,9 +348,11 @@ app.get('/api/ndc/search', async (req, res) => {
       results: [],
     })
   }
-})
+}
 
-app.get('/api/reports', (req, res) => {
+register('get', ['/ndc/search', '/api/ndc/search'], ndcSearchHandler)
+
+const reportsHandler = (req, res) => {
   res.set('Cache-Control', 'no-store')
   res.json({
     type: 'FeatureCollection',
@@ -362,7 +373,9 @@ app.get('/api/reports', (req, res) => {
       },
     })),
   })
-})
+}
+
+register('get', ['/reports', '/api/reports'], reportsHandler)
 
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
