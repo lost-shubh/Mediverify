@@ -466,13 +466,13 @@ function Scanner({ modelInfo }) {
                   <div className="mt-3 h-2 rounded-full bg-slate-800">
                     <div
                       className={`h-2 rounded-full ${
-                        signal.riskPercent >= 56
+                        signal.signalPercent >= 56
                           ? 'bg-rose-400'
-                          : signal.riskPercent >= 35
+                          : signal.signalPercent >= 35
                             ? 'bg-amber-400'
                             : 'bg-emerald-400'
                       }`}
-                      style={{ width: `${Math.max(signal.riskPercent, 6)}%` }}
+                      style={{ width: `${Math.max(signal.signalPercent, 6)}%` }}
                     />
                   </div>
                   <p className="mt-2 text-xs text-slate-400">

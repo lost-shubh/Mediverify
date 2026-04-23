@@ -519,6 +519,94 @@ const getChannelStats = (buffer, channels) => {
   })
 }
 
+const computeEdgeDensity = (buffer, width, height, channels = 1) => {
+  if (width < 2 || height < 2) {
+    return 0
+  }
+
+  let strongEdges = 0
+  let comparisons = 0
+  const threshold = 18
+
+  for (let y = 0; y < height - 1; y += 1) {
+    for (let x = 0; x < width - 1; x += 1) {
+      const index = (y * width + x) * channels
+      const current = buffer[index]
+      const right = buffer[index + channels]
+      const down = buffer[index + width * channels]
+      const delta = Math.max(Math.abs(current - right), Math.abs(current - down))
+
+      if (delta >= threshold) {
+        strongEdges += 1
+      }
+
+      comparisons += 1
+    }
+  }
+
+  return comparisons > 0 ? strongEdges / comparisons : 0
+}
+
+const isSkinTone = (r, g, b) => {
+  const max = Math.max(r, g, b)
+  const min = Math.min(r, g, b)
+
+  return (
+    r > 95 &&
+    g > 40 &&
+    b > 20 &&
+    max - min > 15 &&
+    Math.abs(r - g) > 15 &&
+    r > g &&
+    r > b
+  )
+}
+
+const computeSkinToneCoverage = (buffer, width, height, channels = 3) => {
+  if (channels < 3 || width < 1 || height < 1) {
+    return {
+      skinToneCoverage: 0,
+      centerSkinToneCoverage: 0,
+    }
+  }
+
+  let skinPixels = 0
+  let totalPixels = 0
+  let centerSkinPixels = 0
+  let centerPixels = 0
+  const centerLeft = Math.floor(width * 0.2)
+  const centerRight = Math.ceil(width * 0.8)
+  const centerTop = Math.floor(height * 0.2)
+  const centerBottom = Math.ceil(height * 0.8)
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const index = (y * width + x) * channels
+      const r = buffer[index]
+      const g = buffer[index + 1]
+      const b = buffer[index + 2]
+      const skinTone = isSkinTone(r, g, b)
+
+      totalPixels += 1
+      if (skinTone) {
+        skinPixels += 1
+      }
+
+      if (x >= centerLeft && x < centerRight && y >= centerTop && y < centerBottom) {
+        centerPixels += 1
+        if (skinTone) {
+          centerSkinPixels += 1
+        }
+      }
+    }
+  }
+
+  return {
+    skinToneCoverage: totalPixels > 0 ? skinPixels / totalPixels : 0,
+    centerSkinToneCoverage: centerPixels > 0 ? centerSkinPixels / centerPixels : 0,
+  }
+}
+
 const extractImageMetrics = async (imageSource) => {
   const colorImage = sharp(imageSource).rotate().removeAlpha().toColourspace('srgb')
   const { data: rgbBuffer, info: rgbInfo } = await colorImage
@@ -541,15 +629,30 @@ const extractImageMetrics = async (imageSource) => {
     .toBuffer({ resolveWithObject: true })
   const grayscaleChannel = getChannelStats(grayscaleBuffer, grayscaleInfo.channels)[0]
   const sharpness = grayscaleChannel.stdev
+  const edgeDensity = computeEdgeDensity(
+    grayscaleBuffer,
+    grayscaleInfo.width,
+    grayscaleInfo.height,
+    grayscaleInfo.channels
+  )
   const contrast =
     rgbChannels.reduce((total, channel) => total + channel.stdev, 0) /
     (rgbChannels.length * 255)
+  const { skinToneCoverage, centerSkinToneCoverage } = computeSkinToneCoverage(
+    rgbBuffer,
+    rgbInfo.width,
+    rgbInfo.height,
+    rgbInfo.channels
+  )
 
   return {
     brightness: round(brightness),
     saturation: round(saturation),
     sharpness: round(sharpness, 2),
     contrast: round(contrast),
+    edgeDensity: round(edgeDensity),
+    skinToneCoverage: round(skinToneCoverage),
+    centerSkinToneCoverage: round(centerSkinToneCoverage),
   }
 }
 
@@ -558,8 +661,21 @@ const validateImageMetrics = (metrics) => {
   const saturation = Number(metrics?.saturation)
   const sharpness = Number(metrics?.sharpness)
   const contrast = Number(metrics?.contrast)
+  const edgeDensity = Number(metrics?.edgeDensity)
+  const skinToneCoverage = Number(metrics?.skinToneCoverage)
+  const centerSkinToneCoverage = Number(metrics?.centerSkinToneCoverage)
 
-  if (![brightness, saturation, sharpness, contrast].every(Number.isFinite)) {
+  if (
+    ![
+      brightness,
+      saturation,
+      sharpness,
+      contrast,
+      edgeDensity,
+      skinToneCoverage,
+      centerSkinToneCoverage,
+    ].every(Number.isFinite)
+  ) {
     const error = new Error('Could not extract a reliable visual fingerprint from this image.')
     error.statusCode = 400
     throw error
@@ -570,10 +686,23 @@ const validateImageMetrics = (metrics) => {
   const isBlankDarkCapture = brightness < 0.06 && contrast < 0.02 && sharpness < 2
   const isLowInformationCapture =
     saturation < 0.02 && contrast < 0.012 && sharpness < 1.5
+  const isLikelyPortraitLikeCapture =
+    skinToneCoverage > 0.18 &&
+    centerSkinToneCoverage > 0.24 &&
+    edgeDensity < 0.11 &&
+    contrast < 0.16
 
   if (isBlankWhiteCapture || isBlankDarkCapture || isNearSolidFrame || isLowInformationCapture) {
     const error = new Error(
       'The image does not contain enough medicine-packaging detail. Upload a clear photo of the blister pack, label, or bottle.'
+    )
+    error.statusCode = 400
+    throw error
+  }
+
+  if (isLikelyPortraitLikeCapture) {
+    const error = new Error(
+      'This looks like a face or portrait photo, not a medicine package. Upload a clear photo of the blister pack, label, or bottle only.'
     )
     error.statusCode = 400
     throw error
